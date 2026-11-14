@@ -16,10 +16,8 @@ WORK = ROOT / "shorts_work"
 
 
 def run(args, cwd=None):
-    proc = subprocess.run(
-        args, cwd=str(cwd) if cwd else None, text=True,
-        capture_output=True, timeout=1800
-    )
+    proc = subprocess.run(args, cwd=str(cwd) if cwd else None, text=True,
+                          capture_output=True, timeout=1800)
     if proc.returncode:
         raise RuntimeError((proc.stderr or proc.stdout)[-2500:])
     return proc.stdout.strip()
@@ -27,7 +25,7 @@ def run(args, cwd=None):
 
 def get_id(url):
     match = re.search(
-        r"youtu\\.be/([A-Za-z0-9_-]{11})|youtube\\.com/(?:watch\\?.*v=|shorts/|embed/)([A-Za-z0-9_-]{11})",
+        r"youtu\.be/([A-Za-z0-9_-]{11})|youtube\.com/(?:watch\?.*v=|shorts/|embed/)([A-Za-z0-9_-]{11})",
         url,
     )
     if not match:
@@ -38,22 +36,16 @@ def get_id(url):
 def download(url):
     folder = WORK / "source"
     folder.mkdir(parents=True)
-    info = json.loads(run([
-        sys.executable, "-m", "yt_dlp", "--no-playlist",
-        "--dump-single-json", url
-    ]))
+    info = json.loads(run([sys.executable, "-m", "yt_dlp", "--no-playlist",
+                           "--dump-single-json", url]))
     if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
         raise ValueError("Completed videos only.")
-    run([
-        sys.executable, "-m", "yt_dlp", "--no-playlist",
-        "-f", "bv*[height<=1080]+ba/b[height<=1080]",
-        "--merge-output-format", "mp4",
-        "-o", str(folder / "source.%(ext)s"), url
-    ])
-    candidates = [
-        path for path in folder.glob("source.*")
-        if path.suffix.lower() in (".mp4", ".mkv", ".webm", ".mov")
-    ]
+    run([sys.executable, "-m", "yt_dlp", "--no-playlist",
+         "-f", "bv*[height<=1080]+ba/b[height<=1080]",
+         "--merge-output-format", "mp4",
+         "-o", str(folder / "source.%(ext)s"), url])
+    candidates = [p for p in folder.glob("source.*")
+                  if p.suffix.lower() in (".mp4", ".mkv", ".webm", ".mov")]
     if not candidates:
         raise RuntimeError("Downloader did not produce a video file.")
     source = candidates[0]
@@ -66,16 +58,13 @@ def download(url):
 
 def get_transcript(video_id):
     from youtube_transcript_api import YouTubeTranscriptApi
-
-    data = YouTubeTranscriptApi().fetch(
-        video_id, languages=["hi", "sa", "ur", "bn", "en"]
-    )
+    data = YouTubeTranscriptApi().fetch(video_id, languages=["hi", "sa", "ur", "bn", "en"])
     rows = []
     for item in getattr(data, "snippets", data):
         text = item.get("text", "") if isinstance(item, dict) else getattr(item, "text", "")
         start = item.get("start", 0) if isinstance(item, dict) else getattr(item, "start", 0)
         duration = item.get("duration", 0) if isinstance(item, dict) else getattr(item, "duration", 0)
-        text = re.sub(r"\\s+", " ", str(text)).strip()
+        text = re.sub(r"\s+", " ", str(text)).strip()
         if text:
             rows.append({"start": float(start), "duration": float(duration), "text": text})
     if not rows:
@@ -84,10 +73,10 @@ def get_transcript(video_id):
 
 
 def select(rows, count, minimum, maximum):
-    transcript = "\\n".join(
+    transcript = "\n".join(
         f"[{row['start']:.2f}s] {row['text']}" for row in rows
     )[:65000]
-    prompt = f"""Choose up to {count} distinct, complete and compelling moments from this Hindi devotional transcript. Each must be {minimum}-{maximum} seconds. Do not invent speech. Return ONLY JSON: {{"clips":[{{"start_seconds":1.0,"end_seconds":44.0,"hook":"Hindi hook","title":"Hindi title","description":"Hindi description","hashtags":["#..."],"tags":["..."],"reason":"Hindi reason"}}]}}. Use Hindi for all text fields. Timestamps are seconds from source start:\\n{transcript}"""
+    prompt = f"""Choose up to {count} distinct, complete and compelling moments from this Hindi devotional transcript. Each must be {minimum}-{maximum} seconds. Do not invent speech. Return ONLY JSON: {{"clips":[{{"start_seconds":1.0,"end_seconds":44.0,"hook":"Hindi hook","title":"Hindi title","description":"Hindi description","hashtags":["#..."],"tags":["..."],"reason":"Hindi reason"}}]}}. Use Hindi for all text fields. Timestamps are seconds from source start:\n{transcript}"""
     errors = []
     for provider, key in (("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY")):
         if not os.getenv(key):
@@ -95,8 +84,8 @@ def select(rows, count, minimum, maximum):
         try:
             raw, model = generate(provider, prompt)
             raw = raw.strip()
-            if raw.startswith("```"):
-                raw = "\\n".join(raw.splitlines()[1:-1])
+            if raw.startswith(chr(96) * 3):
+                raw = "\n".join(raw.splitlines()[1:-1])
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
@@ -106,9 +95,7 @@ def select(rows, count, minimum, maximum):
                 return obj, provider, model
         except Exception as exc:
             errors.append(provider + ": " + str(exc)[:250])
-    raise RuntimeError(
-        "No AI provider returned valid clip selections. " + "; ".join(errors)
-    )
+    raise RuntimeError("No AI provider returned valid clip selections. " + "; ".join(errors))
 
 
 def timecode(seconds):
@@ -142,10 +129,8 @@ def create(url, count, minimum, maximum):
             start, end = float(item["start_seconds"]), float(item["end_seconds"])
         except (KeyError, TypeError, ValueError):
             continue
-        if (
-            start < 0 or end > duration or not minimum <= end - start <= maximum
-            or not item.get("title") or not item.get("hook")
-        ):
+        if (start < 0 or end > duration or not minimum <= end - start <= maximum
+                or not item.get("title") or not item.get("hook")):
             continue
         clips.append({
             "start_seconds": round(start, 2),
@@ -178,19 +163,17 @@ def create(url, count, minimum, maximum):
         cues = []
         for row in rows:
             begin = max(clip["start_seconds"], row["start"])
-            finish = min(
-                clip["end_seconds"], row["start"] + max(row["duration"], 1.2)
-            )
+            finish = min(clip["end_seconds"], row["start"] + max(row["duration"], 1.2))
             if finish > begin:
                 cues.append(
-                    f"{len(cues) + 1}\\n"
+                    f"{len(cues) + 1}\n"
                     f"{timecode(begin - clip['start_seconds'])} --> "
-                    f"{timecode(finish - clip['start_seconds'])}\\n"
-                    f"{row['text']}\\n"
+                    f"{timecode(finish - clip['start_seconds'])}\n"
+                    f"{row['text']}\n"
                 )
         if not cues:
             raise RuntimeError("No captions overlap selected clip.")
-        subtitle.write_text("\\n".join(cues), encoding="utf-8-sig")
+        subtitle.write_text("\n".join(cues), encoding="utf-8-sig")
         filter_value = (
             f"subtitles={subtitle.name}:force_style="
             "'FontName=Noto Sans Devanagari,FontSize=20,Outline=2,"
