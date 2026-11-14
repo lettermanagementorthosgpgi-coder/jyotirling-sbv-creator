@@ -36,11 +36,11 @@ def get_id(url):
 def download(url):
     folder = WORK / "source"
     folder.mkdir(parents=True)
-    info = json.loads(run([sys.executable, "-m", "yt_dlp", "--no-playlist",
+    info = json.loads(run([sys.executable, "-m", "yt_dlp", "--js-runtimes", "deno", "--no-playlist",
                            "--dump-single-json", url]))
     if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
         raise ValueError("Completed videos only.")
-    run([sys.executable, "-m", "yt_dlp", "--no-playlist",
+    run([sys.executable, "-m", "yt_dlp", "--js-runtimes", "deno", "--no-playlist",
          "-f", "bv*[height<=1080]+ba/b[height<=1080]",
          "--merge-output-format", "mp4",
          "-o", str(folder / "source.%(ext)s"), url])
