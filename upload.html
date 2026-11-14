@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Jyotirling Shivmath — Video Upload</title>
+<style>
+:root{color-scheme:light dark;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+body{margin:0;background:#101827;color:#f5f7fb;min-height:100vh;display:grid;place-items:center;padding:20px;box-sizing:border-box}
+main{width:min(720px,100%);background:#1b2739;border:1px solid #35445b;border-radius:18px;padding:24px;box-sizing:border-box}
+h1{font-size:1.55rem;margin:0 0 8px}p{color:#c4cede;line-height:1.55}
+label{display:block;margin:16px 0 7px;font-weight:650}
+input,button{font:inherit}
+input[type=password],input[type=text],input[type=file]{box-sizing:border-box;width:100%;padding:12px;border:1px solid #52627b;border-radius:9px;background:#111c2c;color:#fff}
+button{margin-top:18px;padding:12px 18px;border:0;border-radius:9px;background:#e9b85d;color:#201707;font-weight:750;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+small{color:#aebbd0}
+progress{width:100%;height:18px;margin-top:18px}
+#status{white-space:pre-wrap;margin-top:14px;line-height:1.5}
+.note{background:#111c2c;border-radius:10px;padding:12px;margin-top:16px}
+a{color:#f2c66e}
+</style>
+</head>
+<body>
+<main>
+<h1>Jyotirling Shivmath — Video Upload</h1>
+<p>किसी भी कंप्यूटर से अपनी मूल वीडियो को सीधे इस रिपॉज़िटरी के GitHub Release में अपलोड करें। यह पेज वीडियो को अपने सर्वर पर नहीं रखता।</p>
+<div class="note"><strong>सुरक्षा:</strong> Fine-grained GitHub token केवल इसी रिपॉज़िटरी के लिए और Contents: Read and write अनुमति वाला रखें। Token केवल इस ब्राउज़र टैब की memory में रहेगा; यह पेज उसे सेव या कहीं भेजकर लॉग नहीं करता। काम पूरा होने पर token field खाली कर दें।</div>
+<label for="token">GitHub Fine-grained Personal Access Token</label>
+<input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_..." />
+<label for="tag">Release tag (उदाहरण: source-2026-11-14)</label>
+<input id="tag" type="text" value="source-2026-11-14" />
+<label for="file">अपनी वीडियो चुनें (MP4, MOV, MKV, WEBM, M4V)</label>
+<input id="file" type="file" accept="video/mp4,video/quicktime,video/x-matroska,video/webm,video/x-m4v,.mp4,.mov,.mkv,.webm,.m4v" />
+<small>GitHub Release की प्रति फ़ाइल सीमा 2 GiB से कम है। इंटरनेट कटने पर इस पहले संस्करण में upload को फिर से शुरू करना पड़ेगा।</small>
+<br>
+<button id="upload">वीडियो अपलोड करें</button>
+<progress id="progress" max="100" value="0" hidden></progress>
+<div id="status" role="status" aria-live="polite"></div>
+<div id="next" hidden><p>अपलोड सफल हुआ। अब <a href="https://github.com/lettermanagementorthosgpgi-coder/jyotirling-youtube-shorts/actions/workflows/create-youtube-shorts.yml" target="_blank" rel="noopener">Create YouTube Shorts workflow</a> खोलकर Run workflow करें और वही release tag डालें।</p></div>
+</main>
+<script>
+(() => {
+  const owner = "lettermanagementorthosgpgi-coder";
+  const repo = "jyotirling-youtube-shorts";
+  const api = "https://api.github.com";
+  const $ = id => document.getElementById(id);
+  const status = message => $("status").textContent = message;
+  const headers = token => ({
+    "Accept": "application/vnd.github+json",
+    "Authorization": "Bearer " + token,
+    "X-GitHub-Api-Version": "2022-11-28"
+  });
+  async function apiJson(url, token, options={}) {
+    const response = await fetch(url, {...options, headers:{...headers(token), ...(options.headers||{})}});
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.message || ("GitHub API error " + response.status));
+    return body;
+  }
+  $("upload").addEventListener("click", async () => {
+    const token = $("token").value.trim();
+    const tag = $("tag").value.trim();
+    const file = $("file").files[0];
+    $("next").hidden = true;
+    $("progress").hidden = true;
+    $("progress").value = 0;
+    if (!token || !tag || !file) { status("कृपया Token, Release tag और वीडियो—तीनों भरें।"); return; }
+    const allowed = /\.(mp4|mov|mkv|webm|m4v)$/i;
+    if (!allowed.test(file.name)) { status("यह वीडियो फ़ॉर्मेट समर्थित नहीं है।"); return; }
+    if (file.size >= 2 * 1024 * 1024 * 1024) { status("फ़ाइल 2 GiB से छोटी होनी चाहिए।"); return; }
+    const button = $("upload");
+    button.disabled = true;
+    try {
+      status("GitHub पर Release जाँची जा रही है…");
+      let release;
+      const tagUrl = api + "/repos/" + owner + "/" + repo + "/releases/tags/" + encodeURIComponent(tag);
+      const lookup = await fetch(tagUrl, {headers:headers(token)});
+      if (lookup.ok) {
+        release = await lookup.json();
+        if (release.draft) throw new Error("इस tag की Release अभी draft है। कृपया पहले उसे publish करें या नया tag चुनें।");
+      } else if (lookup.status === 404) {
+        release = await apiJson(api + "/repos/" + owner + "/" + repo + "/releases", token, {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({tag_name:tag, name:"Source Video " + tag, body:"User-uploaded source video for Jyotirling Shorts processing.", draft:false, prerelease:false})
+        });
+      } else {
+        const errorBody = await lookup.json().catch(() => ({}));
+        throw new Error(errorBody.message || ("Release lookup failed: " + lookup.status));
+      }
+      const uploadBase = release.upload_url.replace(/\{.*$/, "");
+      const uploadUrl = uploadBase + "?name=" + encodeURIComponent(file.name);
+      status("Release तैयार है। अब वीडियो अपलोड हो रही है…");
+      $("progress").hidden = false;
+      await new Promise((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", uploadUrl);
+        xhr.setRequestHeader("Accept", "application/vnd.github+json");
+        xhr.setRequestHeader("Authorization", "Bearer " + token);
+        xhr.setRequestHeader("X-GitHub-Api-Version", "2022-11-28");
+        xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+        xhr.upload.onprogress = event => {
+          if (event.lengthComputable) {
+            const pct = Math.round(event.loaded / event.total * 100);
+            $("progress").value = pct;
+            status("वीडियो अपलोड हो रही है… " + pct + "% (" + (event.loaded/1024/1024).toFixed(1) + " / " + (event.total/1024/1024).toFixed(1) + " MB)");
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) resolve();
+          else {
+            let message = "Upload failed: HTTP " + xhr.status;
+            try { message = JSON.parse(xhr.responseText).message || message; } catch {}
+            reject(new Error(message));
+          }
+        };
+        xhr.onerror = () => reject(new Error("नेटवर्क या browser CORS त्रुटि। पेज refresh करके फिर प्रयास करें; यदि asset पहले बन गई हो तो पहले Release जाँचें।"));
+        xhr.onabort = () => reject(new Error("अपलोड रोक दी गई।"));
+        xhr.send(file);
+      });
+      $("progress").value = 100;
+      status("अपलोड सफल! Release: " + release.html_url);
+      $("next").hidden = false;
+      $("token").value = "";
+    } catch (error) {
+      status("त्रुटि: " + error.message + "\nयदि अपलोड बीच में विफल हुआ हो, तो Release में asset की जाँच करके ही दोबारा प्रयास करें।");
+    } finally {
+      button.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
