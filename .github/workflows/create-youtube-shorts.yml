@@ -38,6 +38,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install Deno JavaScript runtime for yt-dlp
+        uses: denoland/setup-deno@v2
       - name: Install FFmpeg and Hindi fonts
         run: |
           sudo apt-get update
