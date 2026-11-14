@@ -1,45 +1,47 @@
 # Jyotirling YouTube Shorts
 
-A standalone, manual, approval-first workflow for preparing YouTube Shorts from a public URL of a completed **vertical** video that you own or are authorized to download and edit.
+A standalone, manual, approval-first workflow. Upload one completed vertical source video as a GitHub Release asset; the workflow then transcribes the uploaded audio, selects compelling moments, and renders review-ready Shorts.
 
-## Run it
+## Upload and run
 
-1. Open **Actions → Create YouTube Shorts → Run workflow**.
-2. Enter the public YouTube video URL.
-3. Choose 5, 7, or 10 Shorts and the requested duration range.
-4. Start the workflow and wait for it to finish.
-5. Download the `jyotirling-shorts-review` artifact from the completed run.
+1. Open this repository's **Releases** page and choose **Draft a new release**.
+2. Enter a tag such as `source-2026-11-14`.
+3. Upload exactly one source video file (`.mp4`, `.mov`, `.mkv`, `.webm`, or `.m4v`) as a release asset.
+4. Publish the release.
+5. Open **Actions → Create YouTube Shorts → Run workflow**.
+6. Enter that release tag, choose 5, 7, or 10 Shorts, and choose the duration range.
+7. Start the workflow. When it finishes, download the `jyotirling-shorts-review` artifact.
 
 The ZIP contains MP4 clips, SRT captions, and `shorts_metadata.json` with Hindi hooks, titles, descriptions, hashtags, tags, and review status.
 
 ## Required repository secrets
 
-Add at least one AI key under **Settings → Secrets and variables → Actions → New repository secret**:
+Add these under **Settings → Secrets and variables → Actions → New repository secret**:
 
-- `OPENAI_API_KEY`
-- `GEMINI_API_KEY`
+- `OPENAI_API_KEY` — required for speech-to-text and available as the first text-generation provider.
+- `GEMINI_API_KEY` — optional fallback for text generation.
 
-Optional model overrides can be added as repository variables:
+Optional repository variables:
 
-- `OPENAI_MODEL` (default: `gpt-6-luna`)
-- `GEMINI_MODEL` (default: `gemini-3.8-flash`)
-
-API keys from any other repository are not copied or shared with this repository.
+- `OPENAI_MODEL` — text generation model override.
+- `GEMINI_MODEL` — Gemini text generation model override.
+- `TRANSCRIPTION_MODEL` — defaults to `whisper-1`.
 
 ## Requirements and limitations
 
-- Completed source video longer than 10 minutes.
-- Source must already be vertical; the workflow preserves the original framing and does not crop/reframe.
-- Public timed captions/transcript must be available in Hindi, Sanskrit, Urdu, Bengali, or English.
-- YouTube download access may be blocked or changed; if retrieval fails, the run stops and does not fabricate content.
-- FFmpeg renders MP4 clips and burns the available transcript captions.
+- Upload exactly one completed source video per release.
+- Source video must be longer than 10 minutes and already vertical; no crop/reframing is performed.
+- Audio is transcribed in 10-minute chunks using OpenAI speech-to-text. Transcription usage may incur API charges.
+- AI chooses moments from the generated transcript; Hindi captions are burned into the rendered clips.
 - Review artifact is retained for 7 days.
+- Large uploads are handled as GitHub Release assets, not committed to the repository's source tree.
 
 ## Approval and privacy
 
-- This workflow does not use YouTube Data API or OAuth.
+- No YouTube URL downloading, YouTube Data API, or OAuth is used.
+- The workflow downloads only the video asset you uploaded to this repository's Release.
 - It does not upload Shorts, edit channel metadata, or publish anything.
 - Every Short remains pending your review and approval.
-- Use only videos you own or are authorized to download and edit. A public URL alone does not grant reuse rights.
+- Use only videos you own or are authorized to edit.
 
 This repository is intentionally independent. It does not connect to the Channel Manager, Live Scheduler, website, or any other repository/workflow.
