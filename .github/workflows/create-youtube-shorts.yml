@@ -3,8 +3,8 @@ name: Create YouTube Shorts
 on:
   workflow_dispatch:
     inputs:
-      youtube_url:
-        description: "Public URL of your own/authorized completed vertical video"
+      release_tag:
+        description: "Release tag containing the uploaded source video"
         required: true
         type: string
       shorts_count:
@@ -32,14 +32,12 @@ permissions:
 jobs:
   create-shorts:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install Deno JavaScript runtime for yt-dlp
-        uses: denoland/setup-deno@v2
       - name: Install FFmpeg and Hindi fonts
         run: |
           sudo apt-get update
@@ -49,17 +47,34 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+      - name: Download uploaded video from GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          mkdir -p source_upload
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir source_upload
+          python - <<'PY'
+          from pathlib import Path
+          allowed = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
+          files = [p for p in Path("source_upload").iterdir()
+                   if p.is_file() and p.suffix.lower() in allowed]
+          if len(files) != 1:
+              raise SystemExit(
+                  f"Release must contain exactly one video file; found {len(files)}."
+              )
+          print(f"Selected source video: {files[0].name}")
+          PY
       - name: Create Shorts review package
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          SOURCE_URL: ${{ inputs.youtube_url }}
           SHORTS_COUNT: ${{ inputs.shorts_count }}
           MIN_SECONDS: ${{ inputs.min_seconds }}
           MAX_SECONDS: ${{ inputs.max_seconds }}
         run: |
           python -m src.shorts_creator \
-            --url "$SOURCE_URL" \
+            --file "$(find source_upload -maxdepth 1 -type f | head -n 1)" \
             --count "$SHORTS_COUNT" \
             --min-seconds "$MIN_SECONDS" \
             --max-seconds "$MAX_SECONDS"
