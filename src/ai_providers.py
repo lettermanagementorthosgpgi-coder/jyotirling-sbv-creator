@@ -38,7 +38,7 @@ def generate(provider, prompt):
             for part in item.get("content", []):
                 if part.get("type") == "output_text":
                     parts.append(part.get("text", ""))
-        result = "\\n".join(parts) or data.get("output_text", "")
+        result = "\n".join(parts) or data.get("output_text", "")
         if not result:
             raise RuntimeError("OpenAI returned no text")
         return result, model
@@ -58,7 +58,7 @@ def generate(provider, prompt):
         )
         candidates = data.get("candidates", [])
         parts = candidates[0].get("content", {}).get("parts", []) if candidates else []
-        result = "\\n".join(p.get("text", "") for p in parts if p.get("text"))
+        result = "\n".join(p.get("text", "") for p in parts if p.get("text"))
         if not result:
             raise RuntimeError("Gemini returned no text")
         return result, model
@@ -75,18 +75,20 @@ def transcribe_audio(audio_path):
     path = Path(audio_path)
     boundary = "----ShortsBoundary" + uuid.uuid4().hex
     chunks = []
+
     def field(name, value):
         chunks.append(
-            f"--{boundary}\\r\\nContent-Disposition: form-data; name=\"{name}\"\\r\\n\\r\\n{value}\\r\\n".encode()
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n".encode()
         )
+
     field("model", os.getenv("TRANSCRIPTION_MODEL", "whisper-1"))
     field("response_format", "verbose_json")
     field("timestamp_granularities[]", "segment")
     chunks.append(
-        f"--{boundary}\\r\\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\\r\\nContent-Type: audio/mpeg\\r\\n\\r\\n".encode()
+        f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{path.name}\"\r\nContent-Type: audio/mpeg\r\n\r\n".encode()
     )
     chunks.append(path.read_bytes())
-    chunks.append(f"\\r\\n--{boundary}--\\r\\n".encode())
+    chunks.append(f"\r\n--{boundary}--\r\n".encode())
     request = urllib.request.Request(
         "https://api.openai.com/v1/audio/transcriptions",
         data=b"".join(chunks),
