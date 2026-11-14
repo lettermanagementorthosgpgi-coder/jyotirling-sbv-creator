@@ -1,6 +1,7 @@
 """Approval-first Shorts preparation from a user-uploaded source video."""
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -49,14 +50,14 @@ def transcribe(source):
     ], timeout=3600)
     audio_files = sorted(audio_dir.glob("part_*.mp3"))
     if not audio_files:
-        raise RuntimeError("Could not extract audio for Hindi/ multilingual transcription.")
+        raise RuntimeError("Could not extract audio for multilingual transcription.")
     rows = []
     for index, audio in enumerate(audio_files):
         offset = index * 600
         print(f"Transcribing audio part {index + 1}/{len(audio_files)}")
         segments = transcribe_audio(audio)
         for segment in segments:
-            text = re.sub(r"\\s+", " ", str(segment.get("text", ""))).strip()
+            text = re.sub(r"\s+", " ", str(segment.get("text", ""))).strip()
             if not text:
                 continue
             start = float(segment.get("start", 0)) + offset
@@ -72,20 +73,19 @@ def transcribe(source):
 
 
 def select(rows, count, minimum, maximum):
-    transcript = "\\n".join(
+    transcript = "\n".join(
         f"[{row['start']:.2f}s] {row['text']}" for row in rows
     )[:65000]
-    prompt = f"""Choose up to {count} distinct, complete and compelling moments from this Hindi devotional transcript. Each must be {minimum}-{maximum} seconds. Do not invent speech. Return ONLY JSON: {{"clips":[{{"start_seconds":1.0,"end_seconds":44.0,"hook":"Hindi hook","title":"Hindi title","description":"Hindi description","hashtags":["#..."],"tags":["..."],"reason":"Hindi reason"}}]}}. Use Hindi for all text fields. Timestamps are seconds from source start:\\n{transcript}"""
+    prompt = f"""Choose up to {count} distinct, complete and compelling moments from this Hindi devotional transcript. Each must be {minimum}-{maximum} seconds. Do not invent speech. Return ONLY JSON: {{"clips":[{{"start_seconds":1.0,"end_seconds":44.0,"hook":"Hindi hook","title":"Hindi title","description":"Hindi description","hashtags":["#..."],"tags":["..."],"reason":"Hindi reason"}}]}}. Use Hindi for all text fields. Timestamps are seconds from source start:\n{transcript}"""
     errors = []
     for provider, key in (("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY")):
-        import os
         if not os.getenv(key):
             continue
         try:
             raw, model = generate(provider, prompt)
             raw = raw.strip()
             if raw.startswith(chr(96) * 3):
-                raw = "\\n".join(raw.splitlines()[1:-1])
+                raw = "\n".join(raw.splitlines()[1:-1])
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
@@ -102,6 +102,8 @@ def create(file_path, count, minimum, maximum):
     source_input = Path(file_path)
     if not source_input.is_file():
         raise FileNotFoundError(f"Uploaded source video not found: {source_input}")
+    if source_input.suffix.lower() not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
+        raise ValueError("Unsupported video type. Upload MP4, MOV, MKV, WEBM, or M4V.")
     if not 1 <= count <= 10 or not 15 <= minimum <= maximum <= 60:
         raise ValueError("Count 1–10; duration 15–60 seconds.")
     if WORK.exists():
@@ -160,14 +162,14 @@ def create(file_path, count, minimum, maximum):
             finish = min(clip["end_seconds"], row["start"] + row["duration"])
             if finish > begin:
                 cues.append(
-                    f"{len(cues) + 1}\\n"
+                    f"{len(cues) + 1}\n"
                     f"{timecode(begin - clip['start_seconds'])} --> "
-                    f"{timecode(finish - clip['start_seconds'])}\\n"
-                    f"{row['text']}\\n"
+                    f"{timecode(finish - clip['start_seconds'])}\n"
+                    f"{row['text']}\n"
                 )
         if not cues:
             raise RuntimeError("No captions overlap selected clip.")
-        subtitle.write_text("\\n".join(cues), encoding="utf-8-sig")
+        subtitle.write_text("\n".join(cues), encoding="utf-8-sig")
         filter_value = (
             f"subtitles={subtitle.name}:force_style="
             "'FontName=Noto Sans Devanagari,FontSize=20,Outline=2,"
