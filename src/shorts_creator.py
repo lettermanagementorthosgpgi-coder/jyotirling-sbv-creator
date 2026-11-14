@@ -1,91 +1,91 @@
-"""Approval-first Shorts preparation from a user-authorized public vertical video."""
+"""Approval-first Shorts preparation from a user-uploaded source video."""
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
-import sys
 import zipfile
 from pathlib import Path
 
-from src.ai_providers import generate
+from src.ai_providers import generate, transcribe_audio
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "shorts_work"
 
 
-def run(args, cwd=None):
+def run(args, cwd=None, timeout=1800):
     proc = subprocess.run(args, cwd=str(cwd) if cwd else None, text=True,
-                          capture_output=True, timeout=1800)
+                          capture_output=True, timeout=timeout)
     if proc.returncode:
         raise RuntimeError((proc.stderr or proc.stdout)[-2500:])
     return proc.stdout.strip()
 
 
-def get_id(url):
-    match = re.search(
-        r"youtu\.be/([A-Za-z0-9_-]{11})|youtube\.com/(?:watch\?.*v=|shorts/|embed/)([A-Za-z0-9_-]{11})",
-        url,
-    )
-    if not match:
-        raise ValueError("Valid public YouTube URL required.")
-    return next(value for value in match.groups() if value)
+def timecode(seconds):
+    milliseconds = int(round(seconds * 1000))
+    hours, milliseconds = divmod(milliseconds, 3600000)
+    minutes, milliseconds = divmod(milliseconds, 60000)
+    seconds, milliseconds = divmod(milliseconds, 1000)
+    return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
 
 
-def download(url):
-    folder = WORK / "source"
-    folder.mkdir(parents=True)
-    info = json.loads(run([sys.executable, "-m", "yt_dlp", "--js-runtimes", "deno", "--no-playlist",
-                           "--dump-single-json", url]))
-    if info.get("is_live") or info.get("live_status") in ("is_live", "is_upcoming"):
-        raise ValueError("Completed videos only.")
-    run([sys.executable, "-m", "yt_dlp", "--js-runtimes", "deno", "--no-playlist",
-         "-f", "bv*[height<=1080]+ba/b[height<=1080]",
-         "--merge-output-format", "mp4",
-         "-o", str(folder / "source.%(ext)s"), url])
-    candidates = [p for p in folder.glob("source.*")
-                  if p.suffix.lower() in (".mp4", ".mkv", ".webm", ".mov")]
-    if not candidates:
-        raise RuntimeError("Downloader did not produce a video file.")
-    source = candidates[0]
-    if source.suffix.lower() != ".mp4":
-        converted = folder / "source.mp4"
-        run(["ffmpeg", "-y", "-i", str(source), "-c", "copy", str(converted)])
-        source = converted
-    return source, info
+def get_video_duration(source):
+    value = run([
+        "ffprobe", "-v", "error", "-show_entries", "format=duration",
+        "-of", "default=nw=1:nk=1", str(source)
+    ])
+    return float(value)
 
 
-def get_transcript(video_id):
-    from youtube_transcript_api import YouTubeTranscriptApi
-    data = YouTubeTranscriptApi().fetch(video_id, languages=["hi", "sa", "ur", "bn", "en"])
+def transcribe(source):
+    audio_dir = WORK / "audio_chunks"
+    audio_dir.mkdir(parents=True)
+    pattern = audio_dir / "part_%03d.mp3"
+    run([
+        "ffmpeg", "-y", "-i", str(source), "-vn", "-ac", "1",
+        "-ar", "16000", "-b:a", "64k", "-f", "segment",
+        "-segment_time", "600", "-reset_timestamps", "1",
+        str(pattern)
+    ], timeout=3600)
+    audio_files = sorted(audio_dir.glob("part_*.mp3"))
+    if not audio_files:
+        raise RuntimeError("Could not extract audio for Hindi/ multilingual transcription.")
     rows = []
-    for item in getattr(data, "snippets", data):
-        text = item.get("text", "") if isinstance(item, dict) else getattr(item, "text", "")
-        start = item.get("start", 0) if isinstance(item, dict) else getattr(item, "start", 0)
-        duration = item.get("duration", 0) if isinstance(item, dict) else getattr(item, "duration", 0)
-        text = re.sub(r"\s+", " ", str(text)).strip()
-        if text:
-            rows.append({"start": float(start), "duration": float(duration), "text": text})
+    for index, audio in enumerate(audio_files):
+        offset = index * 600
+        print(f"Transcribing audio part {index + 1}/{len(audio_files)}")
+        segments = transcribe_audio(audio)
+        for segment in segments:
+            text = re.sub(r"\\s+", " ", str(segment.get("text", ""))).strip()
+            if not text:
+                continue
+            start = float(segment.get("start", 0)) + offset
+            end = float(segment.get("end", start - offset)) + offset
+            rows.append({
+                "start": start,
+                "duration": max(0.1, end - start),
+                "text": text,
+            })
     if not rows:
-        raise RuntimeError("No public timed transcript/captions found.")
+        raise RuntimeError("AI transcription returned no speech segments.")
     return rows
 
 
 def select(rows, count, minimum, maximum):
-    transcript = "\n".join(
+    transcript = "\\n".join(
         f"[{row['start']:.2f}s] {row['text']}" for row in rows
     )[:65000]
-    prompt = f"""Choose up to {count} distinct, complete and compelling moments from this Hindi devotional transcript. Each must be {minimum}-{maximum} seconds. Do not invent speech. Return ONLY JSON: {{"clips":[{{"start_seconds":1.0,"end_seconds":44.0,"hook":"Hindi hook","title":"Hindi title","description":"Hindi description","hashtags":["#..."],"tags":["..."],"reason":"Hindi reason"}}]}}. Use Hindi for all text fields. Timestamps are seconds from source start:\n{transcript}"""
+    prompt = f"""Choose up to {count} distinct, complete and compelling moments from this Hindi devotional transcript. Each must be {minimum}-{maximum} seconds. Do not invent speech. Return ONLY JSON: {{"clips":[{{"start_seconds":1.0,"end_seconds":44.0,"hook":"Hindi hook","title":"Hindi title","description":"Hindi description","hashtags":["#..."],"tags":["..."],"reason":"Hindi reason"}}]}}. Use Hindi for all text fields. Timestamps are seconds from source start:\\n{transcript}"""
     errors = []
     for provider, key in (("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY")):
+        import os
         if not os.getenv(key):
             continue
         try:
             raw, model = generate(provider, prompt)
             raw = raw.strip()
             if raw.startswith(chr(96) * 3):
-                raw = "\n".join(raw.splitlines()[1:-1])
+                raw = "\\n".join(raw.splitlines()[1:-1])
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
@@ -98,30 +98,32 @@ def select(rows, count, minimum, maximum):
     raise RuntimeError("No AI provider returned valid clip selections. " + "; ".join(errors))
 
 
-def timecode(seconds):
-    milliseconds = int(round(seconds * 1000))
-    hours, milliseconds = divmod(milliseconds, 3600000)
-    minutes, milliseconds = divmod(milliseconds, 60000)
-    seconds, milliseconds = divmod(milliseconds, 1000)
-    return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
-
-
-def create(url, count, minimum, maximum):
-    video_id = get_id(url)
+def create(file_path, count, minimum, maximum):
+    source_input = Path(file_path)
+    if not source_input.is_file():
+        raise FileNotFoundError(f"Uploaded source video not found: {source_input}")
     if not 1 <= count <= 10 or not 15 <= minimum <= maximum <= 60:
         raise ValueError("Count 1–10; duration 15–60 seconds.")
     if WORK.exists():
         shutil.rmtree(WORK)
     WORK.mkdir(parents=True)
-    source, info = download(url)
-    rows = get_transcript(video_id)
-    duration = float(info.get("duration") or run([
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=nw=1:nk=1", str(source)
-    ]))
+    source_dir = WORK / "source"
+    source_dir.mkdir()
+    source = source_dir / ("source" + source_input.suffix.lower())
+    shutil.copy2(source_input, source)
+
+    duration = get_video_duration(source)
     if duration <= 600:
         raise ValueError("Source video must be longer than 10 minutes.")
+    probe = json.loads(run([
+        "ffprobe", "-v", "error", "-select_streams", "v:0",
+        "-show_entries", "stream=width,height", "-of", "json", str(source)
+    ]))
+    stream = probe.get("streams", [{}])[0]
+    if int(stream.get("height", 0)) <= int(stream.get("width", 0)):
+        raise ValueError("Source is not vertical; no crop/reframing was applied.")
 
+    rows = transcribe(source)
     selected, provider, model = select(rows, count, minimum, maximum)
     clips = []
     for item in selected["clips"]:
@@ -150,30 +152,22 @@ def create(url, count, minimum, maximum):
 
     output = WORK / "shorts"
     output.mkdir()
-    probe = json.loads(run([
-        "ffprobe", "-v", "error", "-select_streams", "v:0",
-        "-show_entries", "stream=width,height", "-of", "json", str(source)
-    ]))
-    stream = probe.get("streams", [{}])[0]
-    if int(stream.get("height", 0)) <= int(stream.get("width", 0)):
-        raise ValueError("Source is not vertical; no crop/reframing was applied.")
-
     for index, clip in enumerate(clips, 1):
         subtitle = output / f"short_{index:02}.srt"
         cues = []
         for row in rows:
             begin = max(clip["start_seconds"], row["start"])
-            finish = min(clip["end_seconds"], row["start"] + max(row["duration"], 1.2))
+            finish = min(clip["end_seconds"], row["start"] + row["duration"])
             if finish > begin:
                 cues.append(
-                    f"{len(cues) + 1}\n"
+                    f"{len(cues) + 1}\\n"
                     f"{timecode(begin - clip['start_seconds'])} --> "
-                    f"{timecode(finish - clip['start_seconds'])}\n"
-                    f"{row['text']}\n"
+                    f"{timecode(finish - clip['start_seconds'])}\\n"
+                    f"{row['text']}\\n"
                 )
         if not cues:
             raise RuntimeError("No captions overlap selected clip.")
-        subtitle.write_text("\n".join(cues), encoding="utf-8-sig")
+        subtitle.write_text("\\n".join(cues), encoding="utf-8-sig")
         filter_value = (
             f"subtitles={subtitle.name}:force_style="
             "'FontName=Noto Sans Devanagari,FontSize=20,Outline=2,"
@@ -185,21 +179,20 @@ def create(url, count, minimum, maximum):
             "-vf", filter_value, "-c:v", "libx264", "-preset", "veryfast",
             "-crf", "21", "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart", str(output / f"short_{index:02}.mp4")
-        ], cwd=output)
-        clip.update({"source_video_url": url, "review_status": "Pending Approval"})
+        ], cwd=output, timeout=3600)
+        clip.update({"source_video_file": source_input.name, "review_status": "Pending Approval"})
 
     report = {
         "status": "success",
-        "source_video_id": video_id,
-        "source_video_url": url,
-        "source_title": info.get("title", ""),
+        "source_video_file": source_input.name,
         "source_duration_seconds": duration,
         "framing": "Original vertical framing preserved",
+        "transcription": "Generated from uploaded video audio",
         "ai_provider": provider,
         "ai_model": model,
         "shorts": clips,
         "publishing": "Not uploaded; each Short requires separate user approval.",
-        "rights_notice": "Use only videos you own or are authorized to download and edit.",
+        "rights_notice": "Use only videos you own or are authorized to edit.",
     }
     (output / "shorts_metadata.json").write_text(
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -214,13 +207,13 @@ def create(url, count, minimum, maximum):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--url", required=True)
+    parser.add_argument("--file", required=True, help="Path to uploaded video file")
     parser.add_argument("--count", type=int, default=5)
     parser.add_argument("--min-seconds", type=int, default=30)
     parser.add_argument("--max-seconds", type=int, default=60)
     args = parser.parse_args()
     print("SHORTS PACKAGE:", create(
-        args.url, args.count, args.min_seconds, args.max_seconds
+        args.file, args.count, args.min_seconds, args.max_seconds
     ))
     print("No YouTube upload, metadata change, or publication was performed.")
 
