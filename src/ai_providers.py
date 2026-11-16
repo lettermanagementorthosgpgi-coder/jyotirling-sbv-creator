@@ -109,6 +109,42 @@ def _duration_seconds(value):
     return float(match.group(1))
 
 
+_GEMINI_LAST_REQUEST_AT = None
+
+
+def _gemini_generate_content(url, headers, body):
+    """Respect Gemini RPM limits and wait/retry when a per-minute quota is hit."""
+    global _GEMINI_LAST_REQUEST_AT
+    rpm = int(os.getenv("GEMINI_REQUESTS_PER_MINUTE", "3"))
+    if not 1 <= rpm <= 60:
+        raise ValueError("GEMINI_REQUESTS_PER_MINUTE must be between 1 and 60.")
+    interval = 60.0 / rpm + 1.0
+    max_retries = int(os.getenv("GEMINI_RATE_LIMIT_RETRIES", "5"))
+
+    for attempt in range(max_retries + 1):
+        if _GEMINI_LAST_REQUEST_AT is not None:
+            wait = interval - (time.monotonic() - _GEMINI_LAST_REQUEST_AT)
+            if wait > 0:
+                print(f"Gemini RPM pacing: waiting {wait:.1f}s before request.")
+                time.sleep(wait)
+        _GEMINI_LAST_REQUEST_AT = time.monotonic()
+        try:
+            return _post(url, headers, body)
+        except RuntimeError as exc:
+            message = str(exc)
+            is_quota_429 = "HTTP 429" in message or "RESOURCE_EXHAUSTED" in message
+            if not is_quota_429 or attempt >= max_retries:
+                raise
+            # Gemini may report RPM or rolling TPM exhaustion. Waiting a full
+            # minute gives the rolling per-minute window time to replenish.
+            retry_wait = 60
+            print(
+                f"Gemini quota limit reached; waiting {retry_wait}s "
+                f"before retry {attempt + 1}/{max_retries}."
+            )
+            time.sleep(retry_wait)
+
+
 def _transcribe_gemini(path):
     key = os.getenv("GEMINI_API_KEY")
     if not key:
@@ -160,7 +196,7 @@ def _transcribe_gemini(path):
     if not file_uri:
         raise RuntimeError("Gemini Files API did not return an audio file URI")
 
-    data = _post(
+    data = _gemini_generate_content(
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
         {"x-goog-api-key": key, "Content-Type": "application/json"},
         {
