@@ -9,7 +9,7 @@ A standalone, manual, approval-first workflow. Upload one completed vertical sou
 3. Upload exactly one source video file (`.mp4`, `.mov`, `.mkv`, `.webm`, or `.m4v`) as a release asset.
 4. Publish the release.
 5. Open **Actions → Create YouTube Shorts → Run workflow**.
-6. Enter that release tag, choose 5, 7, or 10 Shorts, and choose the duration range.
+6. Enter that release tag, choose 5, 7, or 10 Shorts, and use the professional 10–60 second duration ladder. The AI first prefers 10–15 seconds, then 20–25 seconds, then longer complete thoughts up to 60 seconds.
 7. Start the workflow. When it finishes, download the `jyotirling-shorts-review` artifact.
 
 The ZIP contains MP4 clips, SRT captions, and `shorts_metadata.json` with Hindi hooks, titles, descriptions, hashtags, tags, and review status.
@@ -33,14 +33,14 @@ Optional repository variables:
 - Upload exactly one completed source video per release.
 - Source video must be longer than 10 minutes and already vertical; no crop/reframing is performed.
 - Audio is transcribed in 10-minute chunks. OpenAI is tried first; if it fails (including quota/credit errors), Gemini is tried for that same chunk. If both fail, the workflow stops and reports both errors rather than guessing caption timings. The provider that succeeds may incur API charges.
-- AI chooses moments from the generated transcript; Hindi captions are burned into the rendered clips.
+- AI chooses only transcript-aligned boundaries for complete thoughts, prefers 10–15 seconds, then 20–25 seconds, and expands only as needed up to 60 seconds. Each accepted Short receives a quality score (minimum 8/10), score breakdown, and improvement notes. Hindi captions are burned into the rendered clips. If fewer than the requested number meet the quality threshold, fewer are returned.
 - Review artifact is retained for 7 days.
 - Large uploads are handled as GitHub Release assets, not committed to the repository's source tree.
 
 
 ## Short-source test (manual, one clip)
 
-For a controlled test using a source video of 10 minutes or less, open **Actions → Test Create One Short → Run workflow** and enter the Release tag. This separate test workflow creates exactly one 30–45 second review clip and passes the explicit `--allow-short-test` flag. The regular **Create YouTube Shorts** workflow continues to require a source video longer than 10 minutes. The test workflow uses the same OpenAI-first, Gemini-fallback transcription and text-generation flow and may incur API charges.
+For a controlled test using a source video of 10 minutes or less, open **Actions → Test Create One Short → Run workflow** and enter the Release tag. This separate test workflow creates exactly one complete-thought review clip (10–60 seconds) and passes the explicit `--allow-short-test` flag. The regular **Create YouTube Shorts** workflow continues to require a source video longer than 10 minutes. The test workflow uses the same OpenAI-first, Gemini-fallback transcription and text-generation flow and may incur API charges.
 
 ## Approval and privacy
 
