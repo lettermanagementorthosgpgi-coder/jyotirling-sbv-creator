@@ -80,13 +80,23 @@ def transcribe(source):
     utterances = []
     current = None
     for row in rows:
+        row_start = float(row["start"])
+        row_end = row_start + float(row["duration"])
         if current is None:
-            current = {"start": row["start"], "end": row["start"] + row["duration"], "text": row["text"]}
+            current = {"start": row_start, "end": row_end, "text": row["text"]}
             continue
-        pause = row["start"] - current["end"]
+        pause = row_start - current["end"]
+        if pause >= 0.85:
+            utterances.append({
+                "start": current["start"],
+                "duration": max(0.1, current["end"] - current["start"]),
+                "text": unicodedata.normalize("NFC", current["text"]).strip(),
+            })
+            current = {"start": row_start, "end": row_end, "text": row["text"]}
+            continue
         current["text"] += " " + row["text"]
-        current["end"] = row["start"] + row["duration"]
-        if pause >= 0.85 or re.search(r"[।!?…][\"')\]]?$", row["text"]):
+        current["end"] = row_end
+        if re.search(r"[।!?…][\"')\]]?$", row["text"]):
             utterances.append({
                 "start": current["start"],
                 "duration": max(0.1, current["end"] - current["start"]),
