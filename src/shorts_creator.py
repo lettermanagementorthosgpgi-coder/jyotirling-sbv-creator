@@ -147,8 +147,8 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         raise FileNotFoundError(f"Uploaded source video not found: {source_input}")
     if source_input.suffix.lower() not in {".mp4", ".mov", ".mkv", ".webm", ".m4v"}:
         raise ValueError("Unsupported video type. Upload MP4, MOV, MKV, WEBM, or M4V.")
-    if not 1 <= count <= 10 or not 15 <= minimum <= maximum <= 60:
-        raise ValueError("Count 1–10; duration 15–60 seconds.")
+    if not 1 <= count <= 10 or minimum != 10 or maximum != 60:
+        raise ValueError("Count 1–10; adaptive duration policy is 10–60 seconds.")
     if WORK.exists():
         shutil.rmtree(WORK)
     WORK.mkdir(parents=True)
@@ -176,7 +176,8 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
             start, end = float(item["start_seconds"]), float(item["end_seconds"])
         except (KeyError, TypeError, ValueError):
             continue
-        if (start < 0 or end > duration or not minimum <= end - start <= maximum
+        if (start < 0 or end > duration or not 10 <= end - start <= 60
+                or float(item.get("quality_score", 0)) < 8
                 or not item.get("title") or not item.get("hook")):
             continue
         clips.append({
@@ -237,7 +238,10 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         "transcription_models": transcription_models,
         "ai_provider": provider,
         "ai_model": model,
-        "requested_shorts": count,\n        "created_shorts": len(clips),\n        "selection_policy": "10-15s first, then 20-25s, then longer complete thoughts up to 60s",\n        "minimum_quality_score": 8,\n        "shorts": clips,
+        "requested_shorts": count,
+               "created_shorts": len(clips),
+               "selection_policy": "10-15s first, then 20-25s, then longer complete thoughts up to 60s",
+               "minimum_quality_score": 8,\n        "shorts": clips,
         "publishing": "Not uploaded; each Short requires separate user approval.",
         "rights_notice": "Use only videos you own or are authorized to edit.",
     }
