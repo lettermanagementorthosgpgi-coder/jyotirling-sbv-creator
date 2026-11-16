@@ -98,7 +98,7 @@ def select(rows, count, minimum, maximum):
     raise RuntimeError("No AI provider returned valid clip selections. " + "; ".join(errors))
 
 
-def create(file_path, count, minimum, maximum):
+def create(file_path, count, minimum, maximum, allow_short_test=False):
     source_input = Path(file_path)
     if not source_input.is_file():
         raise FileNotFoundError(f"Uploaded source video not found: {source_input}")
@@ -115,8 +115,8 @@ def create(file_path, count, minimum, maximum):
     shutil.copy2(source_input, source)
 
     duration = get_video_duration(source)
-    if duration <= 600:
-        raise ValueError("Source video must be longer than 10 minutes.")
+    if duration <= 600 and not allow_short_test:
+        raise ValueError("Source video must be longer than 10 minutes. Use --allow-short-test only for a short test source.")
     probe = json.loads(run([
         "ffprobe", "-v", "error", "-select_streams", "v:0",
         "-show_entries", "stream=width,height", "-of", "json", str(source)
@@ -213,9 +213,14 @@ def main():
     parser.add_argument("--count", type=int, default=5)
     parser.add_argument("--min-seconds", type=int, default=30)
     parser.add_argument("--max-seconds", type=int, default=60)
+    parser.add_argument(
+        "--allow-short-test", action="store_true",
+        help="Allow a source video of 10 minutes or less for a controlled test only."
+    )
     args = parser.parse_args()
     print("SHORTS PACKAGE:", create(
-        args.file, args.count, args.min_seconds, args.max_seconds
+        args.file, args.count, args.min_seconds, args.max_seconds,
+        allow_short_test=args.allow_short_test
     ))
     print("No YouTube upload, metadata change, or publication was performed.")
 
