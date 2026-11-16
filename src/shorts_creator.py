@@ -52,10 +52,14 @@ def transcribe(source):
     if not audio_files:
         raise RuntimeError("Could not extract audio for multilingual transcription.")
     rows = []
+    transcription_providers = []
+    transcription_models = []
     for index, audio in enumerate(audio_files):
         offset = index * 600
         print(f"Transcribing audio part {index + 1}/{len(audio_files)}")
-        segments = transcribe_audio(audio)
+        segments, provider, model = transcribe_audio(audio)
+        transcription_providers.append(provider)
+        transcription_models.append(model)
         for segment in segments:
             text = re.sub(r"\s+", " ", str(segment.get("text", ""))).strip()
             if not text:
@@ -69,7 +73,7 @@ def transcribe(source):
             })
     if not rows:
         raise RuntimeError("AI transcription returned no speech segments.")
-    return rows
+    return rows, sorted(set(transcription_providers)), sorted(set(transcription_models))
 
 
 def select(rows, count, minimum, maximum):
@@ -125,7 +129,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
     if int(stream.get("height", 0)) <= int(stream.get("width", 0)):
         raise ValueError("Source is not vertical; no crop/reframing was applied.")
 
-    rows = transcribe(source)
+    rows, transcription_providers, transcription_models = transcribe(source)
     selected, provider, model = select(rows, count, minimum, maximum)
     clips = []
     for item in selected["clips"]:
@@ -190,6 +194,8 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         "source_duration_seconds": duration,
         "framing": "Original vertical framing preserved",
         "transcription": "Generated from uploaded video audio",
+        "transcription_providers": transcription_providers,
+        "transcription_models": transcription_models,
         "ai_provider": provider,
         "ai_model": model,
         "shorts": clips,
