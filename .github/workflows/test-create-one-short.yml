@@ -4,10 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag containing the uploaded short test video"
+        description: "Release tag containing the uploaded test video"
         required: true
         type: string
-        default: "title"
+        default: "ABCD"
+      video_asset:
+        description: "Exact video filename to use from the Release"
+        required: true
+        type: string
+        default: "adhyay3.42rudra.mp4"
 
 permissions:
   contents: read
@@ -30,23 +35,21 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Download uploaded video from GitHub Release
+      - name: Download selected video from GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.release_tag }}
+          VIDEO_ASSET: ${{ inputs.video_asset }}
         run: |
           mkdir -p source_upload
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir source_upload
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir source_upload --pattern "$VIDEO_ASSET"
           python - <<'PY'
+          import os
           from pathlib import Path
-          allowed = {".mp4", ".mov", ".mkv", ".webm", ".m4v"}
-          files = [p for p in Path("source_upload").iterdir()
-                   if p.is_file() and p.suffix.lower() in allowed]
-          if len(files) != 1:
-              raise SystemExit(
-                  f"Release must contain exactly one video file; found {len(files)}."
-              )
-          print(f"Selected source video: {files[0].name}")
+          selected = Path("source_upload") / os.environ["VIDEO_ASSET"]
+          if not selected.is_file():
+              raise SystemExit(f"Requested video asset was not found in Release: {selected.name}")
+          print(f"Selected source video: {selected.name}")
           PY
       - name: Create one complete-thought test Short
         env:
@@ -54,7 +57,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python -m src.shorts_creator \
-            --file "$(find source_upload -maxdepth 1 -type f | head -n 1)" \
+            --file "source_upload/${{ inputs.video_asset }}" \
             --count 1 \
             --min-seconds 10 \
             --max-seconds 60 \
