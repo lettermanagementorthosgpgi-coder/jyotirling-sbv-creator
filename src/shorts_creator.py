@@ -76,11 +76,24 @@ def transcribe(source):
     return rows, sorted(set(transcription_providers)), sorted(set(transcription_models))
 
 
-def select(rows, count, minimum, maximum):
-    transcript = "\n".join(
-        f"[{row['start']:.2f}s] {row['text']}" for row in rows
+def select(rows, count):
+    # Candidate boundaries are restricted to actual transcript row edges.
+    boundaries = sorted(set(round(float(x), 2) for row in rows
+                            for x in (row["start"], row["start"] + row["duration"])))
+    transcript = "\\n".join(
+        f"[{row['start']:.2f}s - {row['start'] + row['duration']:.2f}s] {row['text']}"
+        for row in rows
     )[:65000]
-    prompt = f"""Choose up to {count} distinct, complete and compelling moments from this Hindi devotional transcript. Each must be {minimum}-{maximum} seconds. Do not invent speech. Return ONLY JSON: {{"clips":[{{"start_seconds":1.0,"end_seconds":44.0,"hook":"Hindi hook","title":"Hindi title","description":"Hindi description","hashtags":["#..."],"tags":["..."],"reason":"Hindi reason"}}]}}. Use Hindi for all text fields. Timestamps are seconds from source start:\n{transcript}"""
+    prompt = f"""Act as a senior professional Hindi short-video editor.
+Select up to {count} distinct, self-contained moments from this transcript.
+Rules: never cut a sentence, phrase, word, or thought in half; preserve original meaning and context; no invented speech; choose only start/end timestamps from the exact transcript row boundaries shown in brackets.
+Duration ladder: first try 10-15 seconds; if no complete thought fits, try 20-25 seconds; then 26-40; then 41-60. Maximum 60 seconds. Completeness is more important than duration. Return fewer than {count} if fewer excellent moments exist. Avoid overlapping/repeated topics.
+Rate honestly from 1-10 using: completeness/context 2, natural start/end 2, hook 2, Hindi/caption quality 2, technical suitability 2. Only return scores >=8. Explain score and improvements.
+Return ONLY JSON:
+{{"clips":[{{"start_seconds":12.3,"end_seconds":25.4,"hook":"हिन्दी हुक","title":"हिन्दी शीर्षक","description":"विवरण","hashtags":["#..."],"tags":["..."],"reason":"चयन का कारण","quality_score":9,"score_breakdown":{{"completeness":2,"boundaries":2,"hook":2,"captions":2,"technical":1}},"improvements":"सुधार","duration_tier":"10-15"}}]}}
+All text fields in Hindi. Transcript timestamps are source-video seconds.
+TRANSCRIPT:
+{transcript}"""
     errors = []
     for provider, key in (("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY")):
         if not os.getenv(key):
@@ -89,18 +102,43 @@ def select(rows, count, minimum, maximum):
             raw, model = generate(provider, prompt)
             raw = raw.strip()
             if raw.startswith(chr(96) * 3):
-                raw = "\n".join(raw.splitlines()[1:-1])
+                raw = "\\n".join(raw.splitlines()[1:-1])
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
                 left, right = raw.find("{"), raw.rfind("}")
                 obj = json.loads(raw[left:right + 1])
-            if isinstance(obj, dict) and isinstance(obj.get("clips"), list):
-                return obj, provider, model
+            if not isinstance(obj, dict) or not isinstance(obj.get("clips"), list):
+                continue
+            valid = []
+            for item in obj["clips"]:
+                try:
+                    s0, e0 = float(item["start_seconds"]), float(item["end_seconds"])
+                    s = min(boundaries, key=lambda x: abs(x - s0))
+                    e = min(boundaries, key=lambda x: abs(x - e0))
+                    score = float(item.get("quality_score", 0))
+                    if (abs(s-s0) > 1.25 or abs(e-e0) > 1.25 or e <= s
+                            or not 10 <= e-s <= 60 or not 8 <= score <= 10
+                            or not item.get("title") or not item.get("hook")):
+                        continue
+                    item["start_seconds"], item["end_seconds"] = round(s, 2), round(e, 2)
+                    item["quality_score"] = score
+                    valid.append(item)
+                except (KeyError, TypeError, ValueError):
+                    continue
+            valid.sort(key=lambda x: x["quality_score"], reverse=True)
+            chosen = []
+            for item in valid:
+                s, e = item["start_seconds"], item["end_seconds"]
+                if any(s < old["end_seconds"] and e > old["start_seconds"] for old in chosen):
+                    continue
+                chosen.append(item)
+                if len(chosen) == count:
+                    break
+            return {"clips": chosen}, provider, model
         except Exception as exc:
             errors.append(provider + ": " + str(exc)[:250])
-    raise RuntimeError("No AI provider returned valid clip selections. " + "; ".join(errors))
-
+    raise RuntimeError("No AI provider returned valid complete selections. " + "; ".join(errors))
 
 def create(file_path, count, minimum, maximum, allow_short_test=False):
     source_input = Path(file_path)
@@ -130,7 +168,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         raise ValueError("Source is not vertical; no crop/reframing was applied.")
 
     rows, transcription_providers, transcription_models = transcribe(source)
-    selected, provider, model = select(rows, count, minimum, maximum)
+    selected, provider, model = select(rows, count)
     clips = []
     for item in selected["clips"]:
         try:
@@ -143,7 +181,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         clips.append({
             "start_seconds": round(start, 2),
             "end_seconds": round(end, 2),
-            "duration_seconds": round(end - start, 2),
+            "duration_seconds": round(end - start, 2),\n            "quality_score": float(item.get("quality_score", 0)),\n            "score_breakdown": item.get("score_breakdown", {}),\n            "improvements": str(item.get("improvements", ""))[:500],\n            "duration_tier": str(item.get("duration_tier", ""))[:20],
             "hook": str(item["hook"])[:180],
             "title": str(item["title"])[:100],
             "description": str(item.get("description", ""))[:1600],
@@ -198,7 +236,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         "transcription_models": transcription_models,
         "ai_provider": provider,
         "ai_model": model,
-        "shorts": clips,
+        "requested_shorts": count,\n        "created_shorts": len(clips),\n        "selection_policy": "10-15s first, then 20-25s, then longer complete thoughts up to 60s",\n        "minimum_quality_score": 8,\n        "shorts": clips,
         "publishing": "Not uploaded; each Short requires separate user approval.",
         "rights_notice": "Use only videos you own or are authorized to edit.",
     }
@@ -217,7 +255,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--file", required=True, help="Path to uploaded video file")
     parser.add_argument("--count", type=int, default=5)
-    parser.add_argument("--min-seconds", type=int, default=30)
+    parser.add_argument("--min-seconds", type=int, default=10)
     parser.add_argument("--max-seconds", type=int, default=60)
     parser.add_argument(
         "--allow-short-test", action="store_true",
