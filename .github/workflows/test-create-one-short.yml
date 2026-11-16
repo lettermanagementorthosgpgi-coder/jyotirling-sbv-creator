@@ -1,4 +1,4 @@
-name: Test Create One Short
+name: Test Create Two Shorts
 
 on:
   workflow_dispatch:
@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 jobs:
-  create-one-test-short:
+  create-two-test-shorts:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -51,21 +51,21 @@ jobs:
               raise SystemExit(f"Requested video asset was not found in Release: {selected.name}")
           print(f"Selected source video: {selected.name}")
           PY
-      - name: Create one complete-thought test Short
+      - name: Create two complete-thought test Shorts
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python -m src.shorts_creator \
             --file "source_upload/${{ inputs.video_asset }}" \
-            --count 1 \
+            --count 2 \
             --min-seconds 10 \
             --max-seconds 60 \
             --allow-short-test
-      - name: Upload test review ZIP
+      - name: Upload two-Short review ZIP
         uses: actions/upload-artifact@v4
         with:
-          name: jyotirling-one-short-test-review
+          name: jyotirling-two-shorts-test-review
           path: shorts_work/jyotirling_shorts_review.zip
           if-no-files-found: error
           retention-days: 7
