@@ -183,7 +183,11 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         clips.append({
             "start_seconds": round(start, 2),
             "end_seconds": round(end, 2),
-            "duration_seconds": round(end - start, 2),\n            "quality_score": float(item.get("quality_score", 0)),\n            "score_breakdown": item.get("score_breakdown", {}),\n            "improvements": str(item.get("improvements", ""))[:500],\n            "duration_tier": str(item.get("duration_tier", ""))[:20],
+            "duration_seconds": round(end - start, 2),
+            "quality_score": float(item.get("quality_score", 0)),
+            "score_breakdown": item.get("score_breakdown", {}),
+            "improvements": str(item.get("improvements", ""))[:500],
+            "duration_tier": str(item.get("duration_tier", ""))[:20],
             "hook": str(item["hook"])[:180],
             "title": str(item["title"])[:100],
             "description": str(item.get("description", ""))[:1600],
@@ -241,7 +245,8 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         "requested_shorts": count,
                "created_shorts": len(clips),
                "selection_policy": "10-15s first, then 20-25s, then longer complete thoughts up to 60s",
-               "minimum_quality_score": 8,\n        "shorts": clips,
+               "minimum_quality_score": 8,
+        "shorts": clips,
         "publishing": "Not uploaded; each Short requires separate user approval.",
         "rights_notice": "Use only videos you own or are authorized to edit.",
     }
