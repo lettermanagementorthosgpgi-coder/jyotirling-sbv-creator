@@ -6,6 +6,7 @@ import re
 import shutil
 import subprocess
 import zipfile
+import unicodedata
 from pathlib import Path
 
 from src.ai_providers import generate, transcribe_audio
@@ -80,7 +81,7 @@ def select(rows, count):
     # Candidate boundaries are restricted to actual transcript row edges.
     boundaries = sorted(set(round(float(x), 2) for row in rows
                             for x in (row["start"], row["start"] + row["duration"])))
-    transcript = "\\n".join(
+    transcript = "\n".join(
         f"[{row['start']:.2f}s - {row['start'] + row['duration']:.2f}s] {row['text']}"
         for row in rows
     )[:65000]
@@ -102,7 +103,7 @@ TRANSCRIPT:
             raw, model = generate(provider, prompt)
             raw = raw.strip()
             if raw.startswith(chr(96) * 3):
-                raw = "\\n".join(raw.splitlines()[1:-1])
+                raw = "\n".join(raw.splitlines()[1:-1])
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError:
