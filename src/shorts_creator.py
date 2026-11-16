@@ -42,11 +42,14 @@ def get_video_duration(source):
 def transcribe(source):
     audio_dir = WORK / "audio_chunks"
     audio_dir.mkdir(parents=True)
+    chunk_seconds = int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "180"))
+    if not 60 <= chunk_seconds <= 600:
+        raise ValueError("TRANSCRIPTION_CHUNK_SECONDS must be between 60 and 600.")
     pattern = audio_dir / "part_%03d.mp3"
     run([
         "ffmpeg", "-y", "-i", str(source), "-vn", "-ac", "1",
         "-ar", "16000", "-b:a", "64k", "-f", "segment",
-        "-segment_time", "600", "-reset_timestamps", "1",
+        "-segment_time", str(chunk_seconds), "-reset_timestamps", "1",
         str(pattern)
     ], timeout=3600)
     audio_files = sorted(audio_dir.glob("part_*.mp3"))
@@ -56,7 +59,7 @@ def transcribe(source):
     transcription_providers = []
     transcription_models = []
     for index, audio in enumerate(audio_files):
-        offset = index * 600
+        offset = index * chunk_seconds
         print(f"Transcribing audio part {index + 1}/{len(audio_files)}")
         segments, provider, model = transcribe_audio(audio)
         transcription_providers.append(provider)
@@ -297,6 +300,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         "source_duration_seconds": duration,
         "framing": ("Original horizontal frame fully preserved in center; blurred background fills 9:16 canvas" if is_horizontal else "Original vertical frame proportionally fitted; no crop"),
         "transcription": "Generated from uploaded video audio",
+        "transcription_chunk_seconds": int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "180")),
         "transcription_providers": transcription_providers,
         "transcription_models": transcription_models,
         "ai_provider": provider,
