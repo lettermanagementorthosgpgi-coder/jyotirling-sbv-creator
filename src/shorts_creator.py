@@ -74,7 +74,32 @@ def transcribe(source):
             })
     if not rows:
         raise RuntimeError("AI transcription returned no speech segments.")
-    return rows, sorted(set(transcription_providers)), sorted(set(transcription_models))
+
+    # Merge short ASR chunks into complete utterances. Boundaries are created only
+    # after sentence punctuation or a meaningful pause, never at arbitrary 4-5s chunks.
+    utterances = []
+    current = None
+    for row in rows:
+        if current is None:
+            current = {"start": row["start"], "end": row["start"] + row["duration"], "text": row["text"]}
+            continue
+        pause = row["start"] - current["end"]
+        current["text"] += " " + row["text"]
+        current["end"] = row["start"] + row["duration"]
+        if pause >= 0.85 or re.search(r"[।!?…][\"')\]]?$", row["text"]):
+            utterances.append({
+                "start": current["start"],
+                "duration": max(0.1, current["end"] - current["start"]),
+                "text": unicodedata.normalize("NFC", current["text"]).strip(),
+            })
+            current = None
+    if current is not None:
+        utterances.append({
+            "start": current["start"],
+            "duration": max(0.1, current["end"] - current["start"]),
+            "text": unicodedata.normalize("NFC", current["text"]).strip(),
+        })
+    return utterances, sorted(set(transcription_providers)), sorted(set(transcription_models))
 
 
 def select(rows, count):
