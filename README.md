@@ -32,7 +32,7 @@ Optional repository variables:
 
 - Upload exactly one completed source video per release.
 - Source video must be longer than 10 minutes. Horizontal 16:9 footage is placed fully uncropped in the center of a 9:16 canvas; a blurred, darkened duplicate fills the unused top and bottom. Existing vertical footage is proportionally fitted without cropping.
-- Audio is transcribed in configurable 3-minute chunks by default (`TRANSCRIPTION_CHUNK_SECONDS`, allowed 60–600 seconds). OpenAI is tried first; if it fails (including quota/credit errors), Gemini is tried for that same chunk. If both fail, the workflow stops and reports both errors rather than guessing caption timings. The provider that succeeds may incur API charges.
+- Audio is transcribed in configurable 1-minute chunks by default (`TRANSCRIPTION_CHUNK_SECONDS`, allowed 60–600 seconds). OpenAI is tried first; if it fails (including quota/credit errors), Gemini is tried for that same chunk. If both fail, the workflow stops and reports both errors rather than guessing caption timings. The provider that succeeds may incur API charges.
 - AI chooses only transcript-aligned boundaries for complete thoughts, prefers 10–15 seconds, then 20–25 seconds, and expands only as needed up to 60 seconds. Each accepted Short receives a quality score (minimum 8/10), score breakdown, and improvement notes. Hindi captions are burned into the rendered clips. If fewer than the requested number meet the quality threshold, fewer are returned.
 - Review artifact is retained for 7 days.
 - Horizontal-source framing preserves the complete original image; only a blurred background duplicate is enlarged and cropped to fill the vertical canvas.
