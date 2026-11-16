@@ -18,20 +18,21 @@ The ZIP contains MP4 clips, SRT captions, and `shorts_metadata.json` with Hindi 
 
 Add these under **Settings → Secrets and variables → Actions → New repository secret**:
 
-- `OPENAI_API_KEY` — required for speech-to-text and available as the first text-generation provider.
-- `GEMINI_API_KEY` — optional fallback for text generation.
+- `OPENAI_API_KEY` — preferred first provider for speech-to-text and text generation.
+- `GEMINI_API_KEY` — automatic fallback for speech-to-text and text generation if OpenAI is unavailable or fails.
 
 Optional repository variables:
 
 - `OPENAI_MODEL` — text generation model override.
 - `GEMINI_MODEL` — Gemini text generation model override.
-- `TRANSCRIPTION_MODEL` — defaults to `whisper-1`.
+- `TRANSCRIPTION_MODEL` — OpenAI transcription model override (defaults to `whisper-1`).
+- `GEMINI_TRANSCRIPTION_MODEL` — Gemini transcription model override (defaults to `gemini-3.5-transcribe`).
 
 ## Requirements and limitations
 
 - Upload exactly one completed source video per release.
 - Source video must be longer than 10 minutes and already vertical; no crop/reframing is performed.
-- Audio is transcribed in 10-minute chunks using OpenAI speech-to-text. Transcription usage may incur API charges.
+- Audio is transcribed in 10-minute chunks. OpenAI is tried first; if it fails (including quota/credit errors), Gemini is tried for that same chunk. If both fail, the workflow stops and reports both errors rather than guessing caption timings. The provider that succeeds may incur API charges.
 - AI chooses moments from the generated transcript; Hindi captions are burned into the rendered clips.
 - Review artifact is retained for 7 days.
 - Large uploads are handled as GitHub Release assets, not committed to the repository's source tree.
@@ -39,7 +40,7 @@ Optional repository variables:
 
 ## Short-source test (manual, one clip)
 
-For a controlled test using a source video of 10 minutes or less, open **Actions → Test Create One Short → Run workflow** and enter the Release tag. This separate test workflow creates exactly one 30–45 second review clip and passes the explicit `--allow-short-test` flag. The regular **Create YouTube Shorts** workflow continues to require a source video longer than 10 minutes. The test workflow uses the same OpenAI transcription and text-generation APIs and may incur API charges.
+For a controlled test using a source video of 10 minutes or less, open **Actions → Test Create One Short → Run workflow** and enter the Release tag. This separate test workflow creates exactly one 30–45 second review clip and passes the explicit `--allow-short-test` flag. The regular **Create YouTube Shorts** workflow continues to require a source video longer than 10 minutes. The test workflow uses the same OpenAI-first, Gemini-fallback transcription and text-generation flow and may incur API charges.
 
 ## Approval and privacy
 
