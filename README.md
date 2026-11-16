@@ -36,6 +36,11 @@ Optional repository variables:
 - Review artifact is retained for 7 days.
 - Large uploads are handled as GitHub Release assets, not committed to the repository's source tree.
 
+
+## Short-source test (manual, one clip)
+
+For a controlled test using a source video of 10 minutes or less, open **Actions → Test Create One Short → Run workflow** and enter the Release tag. This separate test workflow creates exactly one 30–45 second review clip and passes the explicit `--allow-short-test` flag. The regular **Create YouTube Shorts** workflow continues to require a source video longer than 10 minutes. The test workflow uses the same OpenAI transcription and text-generation APIs and may incur API charges.
+
 ## Approval and privacy
 
 - No YouTube URL downloading, YouTube Data API, or OAuth is used.
