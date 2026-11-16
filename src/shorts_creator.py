@@ -200,8 +200,11 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         "-show_entries", "stream=width,height", "-of", "json", str(source)
     ]))
     stream = probe.get("streams", [{}])[0]
-    if int(stream.get("height", 0)) <= int(stream.get("width", 0)):
-        raise ValueError("Source is not vertical; no crop/reframing was applied.")
+    source_width = int(stream.get("width", 0))
+    source_height = int(stream.get("height", 0))
+    if source_width <= 0 or source_height <= 0:
+        raise ValueError("Could not determine source video dimensions.")
+    is_horizontal = source_width > source_height
 
     rows, transcription_providers, transcription_models = transcribe(source)
     selected, provider, model = select(rows, count)
@@ -254,15 +257,35 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         if not cues:
             raise RuntimeError("No captions overlap selected clip.")
         subtitle.write_text("\n".join(cues), encoding="utf-8-sig")
-        filter_value = (
+        subtitle_filter = (
             f"subtitles={subtitle.name}:force_style="
             "'FontName=Noto Sans Devanagari,FontSize=20,Outline=2,"
             "Shadow=1,Alignment=2,MarginV=55'"
         )
+        if is_horizontal:
+            # Keep the complete original 16:9 frame centered and uncropped.
+            # A blurred, darkened duplicate fills the unused 9:16 canvas.
+            video_filter = (
+                "[0:v]split=2[bgsrc][fgsrc];"
+                "[bgsrc]scale=1080:1920:force_original_aspect_ratio=increase,"
+                "crop=1080:1920,boxblur=24:12,eq=brightness=-0.18[bg];"
+                "[fgsrc]scale=1080:1920:force_original_aspect_ratio=decrease[fg];"
+                "[bg][fg]overlay=(W-w)/2:(H-h)/2,"
+                f"{subtitle_filter},setsar=1,format=yuv420p[v]"
+            )
+            map_args = ["-filter_complex", video_filter, "-map", "[v]", "-map", "0:a?"]
+        else:
+            # Existing vertical footage is scaled proportionally to fit; no crop.
+            video_filter = (
+                "scale=1080:1920:force_original_aspect_ratio=decrease,"
+                "pad=1080:1920:(ow-iw)/2:(oh-ih)/2,"
+                f"{subtitle_filter},setsar=1,format=yuv420p"
+            )
+            map_args = ["-vf", video_filter]
         run([
             "ffmpeg", "-y", "-ss", str(clip["start_seconds"]),
             "-i", str(source), "-t", str(clip["duration_seconds"]),
-            "-vf", filter_value, "-c:v", "libx264", "-preset", "veryfast",
+            *map_args, "-c:v", "libx264", "-preset", "veryfast",
             "-crf", "21", "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart", str(output / f"short_{index:02}.mp4")
         ], cwd=output, timeout=3600)
@@ -272,7 +295,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         "status": "success",
         "source_video_file": source_input.name,
         "source_duration_seconds": duration,
-        "framing": "Original vertical framing preserved",
+        "framing": ("Original horizontal frame fully preserved in center; blurred background fills 9:16 canvas" if is_horizontal else "Original vertical frame proportionally fitted; no crop"),
         "transcription": "Generated from uploaded video audio",
         "transcription_providers": transcription_providers,
         "transcription_models": transcription_models,
