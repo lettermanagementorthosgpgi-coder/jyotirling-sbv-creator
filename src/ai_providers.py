@@ -250,12 +250,77 @@ def _transcribe_gemini(path):
     return segments, model
 
 
+
+_LOCAL_WHISPER_MODEL = None
+_LOCAL_WHISPER_MODEL_NAME = None
+
+
+def _transcribe_local(path):
+    """Run multilingual Whisper locally on the GitHub runner; no transcription API calls."""
+    global _LOCAL_WHISPER_MODEL, _LOCAL_WHISPER_MODEL_NAME
+    from faster_whisper import WhisperModel
+
+    model_name = os.getenv("WHISPER_MODEL", "small")
+    if _LOCAL_WHISPER_MODEL is None or _LOCAL_WHISPER_MODEL_NAME != model_name:
+        print(f"Loading local Whisper model: {model_name}")
+        _LOCAL_WHISPER_MODEL = WhisperModel(
+            model_name,
+            device="cpu",
+            compute_type=os.getenv("WHISPER_COMPUTE_TYPE", "int8"),
+            cpu_threads=int(os.getenv("WHISPER_CPU_THREADS", "4")),
+            num_workers=1,
+        )
+        _LOCAL_WHISPER_MODEL_NAME = model_name
+
+    detected_language = os.getenv("WHISPER_LANGUAGE", "").strip() or None
+    segments, info = _LOCAL_WHISPER_MODEL.transcribe(
+        str(path),
+        language=detected_language,
+        beam_size=5,
+        vad_filter=True,
+        condition_on_previous_text=True,
+    )
+    rows = []
+    for segment in segments:
+        spoken = str(segment.text or "").strip()
+        if spoken:
+            rows.append({
+                "start": float(segment.start),
+                "end": float(segment.end),
+                "text": spoken,
+            })
+    if not rows:
+        raise RuntimeError("Local Whisper returned no speech segments")
+    language = getattr(info, "language", None) or "auto"
+    return rows, f"faster-whisper-{model_name}-{language}"
+
+
 def transcribe_audio(audio_path):
-    """Try OpenAI first and automatically fall back to Gemini for audio transcription."""
+    """Use local Whisper by default; API transcription is opt-in only."""
     path = Path(audio_path)
+    selected = os.getenv("TRANSCRIPTION_PROVIDER", "local").strip().lower()
+
+    if selected in {"local", "whisper", "faster-whisper"}:
+        try:
+            segments, model = _transcribe_local(path)
+            print(f"Audio transcription completed locally ({model})")
+            return segments, "local", model
+        except Exception as exc:
+            if os.getenv("TRANSCRIPTION_ALLOW_API_FALLBACK", "false").lower() != "true":
+                raise RuntimeError(
+                    "Local Whisper transcription failed; API fallback is disabled. "
+                    + str(exc)[:500]
+                ) from exc
+            print(f"Local Whisper failed; API fallback was explicitly enabled: {str(exc)[:300]}")
+
+    if selected not in {"local", "whisper", "faster-whisper", "auto", "openai", "gemini"}:
+        raise RuntimeError(f"Unknown TRANSCRIPTION_PROVIDER: {selected}")
+
     errors = []
     providers = (("openai", os.getenv("OPENAI_API_KEY"), _transcribe_openai),
                  ("gemini", os.getenv("GEMINI_API_KEY"), _transcribe_gemini))
+    if selected in {"openai", "gemini"}:
+        providers = tuple(item for item in providers if item[0] == selected)
     for provider, key, function in providers:
         if not key:
             errors.append(f"{provider}: API key is not configured")
@@ -265,7 +330,7 @@ def transcribe_audio(audio_path):
             print(f"Audio transcription completed with {provider} ({model})")
             return segments, provider, model
         except Exception as exc:
-            message = str(exc).replace("\n", " ")[:500]
+            message = str(exc).replace("\\n", " ")[:500]
             print(f"{provider} transcription failed; trying next provider: {message}")
             errors.append(f"{provider}: {message}")
-    raise RuntimeError("Both transcription providers failed. " + "; ".join(errors))
+    raise RuntimeError("Transcription providers failed. " + "; ".join(errors))
