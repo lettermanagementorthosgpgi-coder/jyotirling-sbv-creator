@@ -48,7 +48,7 @@ jobs:
               )
           print(f"Selected source video: {files[0].name}")
           PY
-      - name: Create one 30-45 second test Short
+      - name: Create one complete-thought test Short
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -56,8 +56,8 @@ jobs:
           python -m src.shorts_creator \
             --file "$(find source_upload -maxdepth 1 -type f | head -n 1)" \
             --count 1 \
-            --min-seconds 30 \
-            --max-seconds 45 \
+            --min-seconds 10 \
+            --max-seconds 60 \
             --allow-short-test
       - name: Upload test review ZIP
         uses: actions/upload-artifact@v4
