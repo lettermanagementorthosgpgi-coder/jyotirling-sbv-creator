@@ -62,7 +62,7 @@ def transcribe(source):
         transcription_providers.append(provider)
         transcription_models.append(model)
         for segment in segments:
-            text = re.sub(r"\s+", " ", str(segment.get("text", ""))).strip()
+            text = unicodedata.normalize("NFC", re.sub(r"\s+", " ", str(segment.get("text", ""))).strip())
             if not text:
                 continue
             start = float(segment.get("start", 0)) + offset
@@ -206,9 +206,10 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         subtitle = output / f"short_{index:02}.srt"
         cues = []
         for row in rows:
-            begin = max(clip["start_seconds"], row["start"])
-            finish = min(clip["end_seconds"], row["start"] + row["duration"])
-            if finish > begin:
+            begin = row["start"]
+            finish = row["start"] + row["duration"]
+            # Keep each transcript caption whole; do not clip a phrase at edit boundaries.
+            if begin >= clip["start_seconds"] - 0.05 and finish <= clip["end_seconds"] + 0.05:
                 cues.append(
                     f"{len(cues) + 1}\n"
                     f"{timecode(begin - clip['start_seconds'])} --> "
