@@ -10,6 +10,18 @@ class ShortsHelpersTest(unittest.TestCase):
     def test_timecode_hours(self):
         self.assertEqual(timecode(3661.5), "01:01:01,500")
 
+    def test_silent_local_whisper_chunk_is_skipped(self):
+        from unittest.mock import patch
+        from src.ai_providers import transcribe_audio
+
+        with patch.dict("os.environ", {"TRANSCRIPTION_PROVIDER": "local", "TRANSCRIPTION_ALLOW_API_FALLBACK": "false"}):
+            with patch("src.ai_providers._transcribe_local", return_value=([], "faster-whisper-small-hi")):
+                segments, provider, model = transcribe_audio("silent-part.mp3")
+
+        self.assertEqual(segments, [])
+        self.assertEqual(provider, "local")
+        self.assertEqual(model, "faster-whisper-small-hi")
+
 
 if __name__ == "__main__":
     unittest.main()
