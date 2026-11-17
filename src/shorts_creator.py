@@ -42,10 +42,14 @@ def get_video_duration(source):
 def transcribe(source):
     audio_dir = WORK / "audio_chunks"
     audio_dir.mkdir(parents=True)
-    chunk_seconds = int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "60"))
+    chunk_seconds = int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "600"))
     if not 60 <= chunk_seconds <= 600:
         raise ValueError("TRANSCRIPTION_CHUNK_SECONDS must be between 60 and 600.")
     pattern = audio_dir / "part_%03d.mp3"
+    print(
+        f"STEP 1/5: Extracting audio into {chunk_seconds // 60}-minute parts...",
+        flush=True,
+    )
     run([
         "ffmpeg", "-y", "-i", str(source), "-vn", "-ac", "1",
         "-ar", "16000", "-b:a", "64k", "-f", "segment",
@@ -53,6 +57,7 @@ def transcribe(source):
         str(pattern)
     ], timeout=3600)
     audio_files = sorted(audio_dir.glob("part_*.mp3"))
+    print(f"Audio extraction complete: {len(audio_files)} parts found.", flush=True)
     if not audio_files:
         raise RuntimeError("Could not extract audio for multilingual transcription.")
     rows = []
@@ -60,10 +65,26 @@ def transcribe(source):
     transcription_models = []
     for index, audio in enumerate(audio_files):
         offset = index * chunk_seconds
-        print(f"Transcribing audio part {index + 1}/{len(audio_files)}")
+        print(
+            f"TRANSCRIPTION: starting part {index + 1}/{len(audio_files)} "
+            f"({offset // 60}-{(offset + chunk_seconds) // 60} min of source video).",
+            flush=True,
+        )
         segments, provider, model = transcribe_audio(audio)
         transcription_providers.append(provider)
         transcription_models.append(model)
+        if not segments:
+            print(
+                f"TRANSCRIPTION: part {index + 1}/{len(audio_files)} contains no detected speech; "
+                "skipping it and continuing.",
+                flush=True,
+            )
+            continue
+        print(
+            f"TRANSCRIPTION: part {index + 1}/{len(audio_files)} complete "
+            f"({len(segments)} speech segments).",
+            flush=True,
+        )
         for segment in segments:
             text = unicodedata.normalize("NFC", re.sub(r"\s+", " ", str(segment.get("text", ""))).strip())
             if not text:
@@ -76,7 +97,14 @@ def transcribe(source):
                 "text": text,
             })
     if not rows:
-        raise RuntimeError("AI transcription returned no speech segments.")
+        raise RuntimeError(
+            "No speech was detected in any audio part. Check that the source video contains audible speech."
+        )
+    print(
+        f"TRANSCRIPTION COMPLETE: {len(rows)} timestamped speech segments collected; "
+        f"{len(transcription_providers)} audio parts processed.",
+        flush=True,
+    )
 
     # Merge short ASR chunks into complete utterances. Boundaries are created only
     # after sentence punctuation or a meaningful pause, never at arbitrary 4-5s chunks.
@@ -112,6 +140,7 @@ def transcribe(source):
             "duration": max(0.1, current["end"] - current["start"]),
             "text": unicodedata.normalize("NFC", current["text"]).strip(),
         })
+    print(f"Transcript assembled into {len(utterances)} utterances.", flush=True)
     return utterances, sorted(set(transcription_providers)), sorted(set(transcription_models))
 
 
@@ -133,12 +162,15 @@ Return ONLY JSON:
 All text fields in Hindi. Transcript timestamps are source-video seconds.
 TRANSCRIPT:
 {transcript}"""
+    print("STEP 2/5: Selecting complete, high-quality moments from the Hindi transcript...", flush=True)
     errors = []
     for provider, key in (("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY")):
         if not os.getenv(key):
             continue
         try:
+            print(f"Requesting clip selection from {provider}...", flush=True)
             raw, model = generate(provider, prompt)
+            print(f"Clip selection response received from {provider} ({model}).", flush=True)
             raw = raw.strip()
             if raw.startswith(chr(96) * 3):
                 raw = "\n".join(raw.splitlines()[1:-1])
@@ -209,8 +241,12 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         raise ValueError("Could not determine source video dimensions.")
     is_horizontal = source_width > source_height
 
+    print(f"SOURCE: {source.name}; duration {duration / 60:.1f} minutes.", flush=True)
+    print("STEP 1/5: Starting audio transcription.", flush=True)
     rows, transcription_providers, transcription_models = transcribe(source)
+    print("STEP 2/5: Transcript ready; starting clip selection.", flush=True)
     selected, provider, model = select(rows, count)
+    print(f"CLIP SELECTION COMPLETE: {len(selected.get('clips', []))} candidates returned.", flush=True)
     clips = []
     for item in selected["clips"]:
         try:
@@ -243,7 +279,13 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
 
     output = WORK / "shorts"
     output.mkdir()
+    print(f"STEP 3/5: Rendering {len(clips)} Shorts for review.", flush=True)
     for index, clip in enumerate(clips, 1):
+        print(
+            f"RENDER: Short {index}/{len(clips)}; source "
+            f"{clip['start_seconds']:.1f}s–{clip['end_seconds']:.1f}s.",
+            flush=True,
+        )
         subtitle = output / f"short_{index:02}.srt"
         cues = []
         for row in rows:
@@ -293,7 +335,9 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
             "-movflags", "+faststart", str(output / f"short_{index:02}.mp4")
         ], cwd=output, timeout=3600)
         clip.update({"source_video_file": source_input.name, "review_status": "Pending Approval"})
+        print(f"RENDER COMPLETE: Short {index}/{len(clips)} written with synced Hindi captions.", flush=True)
 
+    print("STEP 4/5: Writing SEO metadata and review report.", flush=True)
     report = {
         "status": "success",
         "source_video_file": source_input.name,
@@ -317,10 +361,12 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     archive = WORK / "jyotirling_shorts_review.zip"
+    print("STEP 5/5: Creating the review ZIP package.", flush=True)
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as package:
         for path in output.iterdir():
             if path.is_file():
                 package.write(path, path.name)
+    print(f"PACKAGE COMPLETE: {archive} ({archive.stat().st_size:,} bytes).", flush=True)
     return archive
 
 
