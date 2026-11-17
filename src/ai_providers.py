@@ -262,7 +262,7 @@ def _transcribe_local(path):
 
     model_name = os.getenv("WHISPER_MODEL", "small")
     if _LOCAL_WHISPER_MODEL is None or _LOCAL_WHISPER_MODEL_NAME != model_name:
-        print(f"Loading local Whisper model: {model_name}")
+        print(f"Loading local Whisper model: {model_name}", flush=True)
         _LOCAL_WHISPER_MODEL = WhisperModel(
             model_name,
             device="cpu",
@@ -289,9 +289,15 @@ def _transcribe_local(path):
                 "end": float(segment.end),
                 "text": spoken,
             })
-    if not rows:
-        raise RuntimeError("Local Whisper returned no speech segments")
+            if len(rows) == 1 or len(rows) % 25 == 0:
+                print(
+                    f"Whisper progress: {len(rows)} speech segments; "
+                    f"audio position {float(segment.end):.1f}s",
+                    flush=True,
+                )
     language = getattr(info, "language", None) or "auto"
+    if not rows:
+        print("Whisper found no speech in this audio part; skipping this silent part.", flush=True)
     return rows, f"faster-whisper-{model_name}-{language}"
 
 
@@ -303,7 +309,10 @@ def transcribe_audio(audio_path):
     if selected in {"local", "whisper", "faster-whisper"}:
         try:
             segments, model = _transcribe_local(path)
-            print(f"Audio transcription completed locally ({model})")
+            if segments:
+                print(f"Audio transcription completed locally ({model}); {len(segments)} segments.", flush=True)
+            else:
+                print(f"No speech detected in this part ({model}); continuing to the next part.", flush=True)
             return segments, "local", model
         except Exception as exc:
             if os.getenv("TRANSCRIPTION_ALLOW_API_FALLBACK", "false").lower() != "true":
