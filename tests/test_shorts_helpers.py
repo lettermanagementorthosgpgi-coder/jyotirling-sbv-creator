@@ -10,6 +10,13 @@ class ShortsHelpersTest(unittest.TestCase):
     def test_timecode_hours(self):
         self.assertEqual(timecode(3661.5), "01:01:01,500")
 
+    def test_provider_quota_classification(self):
+        from src.ai_providers import provider_limit_kind
+        self.assertEqual(provider_limit_kind("HTTP 429 rate_limit_exceeded: tokens per minute"), "minute")
+        self.assertEqual(provider_limit_kind("RESOURCE_EXHAUSTED: RequestsPerDay quota exceeded"), "daily")
+        self.assertEqual(provider_limit_kind("insufficient_quota"), "daily")
+        self.assertEqual(provider_limit_kind("Read operation timed out"), "other")
+
     def test_silent_local_whisper_chunk_is_skipped(self):
         from unittest.mock import patch
         from src.ai_providers import transcribe_audio
