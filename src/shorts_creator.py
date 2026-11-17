@@ -74,6 +74,8 @@ def transcribe(source, resume_dir=None):
     checkpoint_dir = WORK / "whisper_chunks"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     restored_dir = Path(resume_dir) / "whisper_chunks" if resume_dir else None
+    source_name = Path(source).name
+    source_size = Path(source).stat().st_size
     for index, audio in enumerate(audio_files):
         offset = index * chunk_seconds
         print(
@@ -86,9 +88,13 @@ def transcribe(source, resume_dir=None):
         saved_part = None
         if restored_file and restored_file.is_file():
             saved_part = json.loads(restored_file.read_text(encoding="utf-8"))
-            if saved_part.get("chunk_seconds") != chunk_seconds or saved_part.get("part_index") != index + 1:
-                raise RuntimeError(f"Whisper checkpoint metadata mismatch: {restored_file.name}")
-            print(f"WHISPER RESUME: restored saved part {index + 1}/{len(audio_files)}.", flush=True)
+            if (saved_part.get("chunk_seconds") != chunk_seconds
+                    or saved_part.get("part_index") != index + 1
+                    or saved_part.get("source_video_name") != source_name
+                    or saved_part.get("source_video_size_bytes") != source_size):
+                raise RuntimeError(f"Whisper checkpoint belongs to a different source or settings: {restored_file.name}")
+            _atomic_json(checkpoint_file, saved_part)
+            print(f"WHISPER RESUME: restored and re-saved part {index + 1}/{len(audio_files)}.", flush=True)
         elif checkpoint_file.is_file():
             saved_part = json.loads(checkpoint_file.read_text(encoding="utf-8"))
             print(f"WHISPER RESUME: reusing local saved part {index + 1}/{len(audio_files)}.", flush=True)
@@ -106,6 +112,7 @@ def transcribe(source, resume_dir=None):
             saved_part = {
                 "version": 1, "part_index": index + 1, "chunk_seconds": chunk_seconds,
                 "source_audio": audio.name, "source_offset_seconds": offset,
+                "source_video_name": source_name, "source_video_size_bytes": source_size,
                 "provider": provider, "model": model, "has_speech": bool(part_rows),
                 "segments": part_rows,
             }
