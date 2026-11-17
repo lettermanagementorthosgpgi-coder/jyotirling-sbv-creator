@@ -74,8 +74,14 @@ def transcribe(source, resume_dir=None):
     checkpoint_dir = WORK / "whisper_chunks"
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
     restored_dir = Path(resume_dir) / "whisper_chunks" if resume_dir else None
+    import hashlib
     source_name = Path(source).name
     source_size = Path(source).stat().st_size
+    source_hash = hashlib.sha256()
+    with Path(source).open("rb") as source_stream:
+        for block in iter(lambda: source_stream.read(1024 * 1024), b""):
+            source_hash.update(block)
+    source_sha256 = source_hash.hexdigest()
     for index, audio in enumerate(audio_files):
         offset = index * chunk_seconds
         print(
@@ -91,7 +97,8 @@ def transcribe(source, resume_dir=None):
             if (saved_part.get("chunk_seconds") != chunk_seconds
                     or saved_part.get("part_index") != index + 1
                     or saved_part.get("source_video_name") != source_name
-                    or saved_part.get("source_video_size_bytes") != source_size):
+                    or saved_part.get("source_video_size_bytes") != source_size
+                    or saved_part.get("source_video_sha256") != source_sha256):
                 raise RuntimeError(f"Whisper checkpoint belongs to a different source or settings: {restored_file.name}")
             _atomic_json(checkpoint_file, saved_part)
             print(f"WHISPER RESUME: restored and re-saved part {index + 1}/{len(audio_files)}.", flush=True)
@@ -113,6 +120,7 @@ def transcribe(source, resume_dir=None):
                 "version": 1, "part_index": index + 1, "chunk_seconds": chunk_seconds,
                 "source_audio": audio.name, "source_offset_seconds": offset,
                 "source_video_name": source_name, "source_video_size_bytes": source_size,
+                "source_video_sha256": source_sha256,
                 "provider": provider, "model": model, "has_speech": bool(part_rows),
                 "segments": part_rows,
             }
