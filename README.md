@@ -10,7 +10,7 @@ A standalone, manual, approval-first workflow. Upload one completed vertical sou
 4. Publish the release.
 5. Open **Actions → Create YouTube Shorts → Run workflow**.
 6. Enter that release tag, choose 5, 7, or 10 Shorts, and use the professional 10–60 second duration ladder. The AI first prefers 10–15 seconds, then 20–25 seconds, then longer complete thoughts up to 60 seconds.
-7. Start the workflow. When it finishes, download the `jyotirling-shorts-review` artifact.
+7. Start the workflow. When it finishes, download the review artifact. If both AI daily quotas are exhausted, note the failed run ID from its URL; on the next day, run again with the same Release tag/video asset and enter that ID in `resume_run_id` to continue from the saved checkpoint.
 
 The ZIP contains MP4 clips, SRT captions, and `shorts_metadata.json` with Hindi hooks, titles, descriptions, hashtags, tags, and review status.
 
@@ -32,8 +32,8 @@ Optional repository variables:
 
 - Upload exactly one completed source video per release.
 - Source video must be longer than 10 minutes. Horizontal 16:9 footage is placed fully uncropped in the center of a 9:16 canvas; a blurred, darkened duplicate fills the unused top and bottom. Existing vertical footage is proportionally fitted without cropping.
-- Audio is transcribed in configurable 1-minute chunks by default (`TRANSCRIPTION_CHUNK_SECONDS`, allowed 60–600 seconds). OpenAI is tried first; if it fails (including quota/credit errors), Gemini is tried for that same chunk. If both fail, the workflow stops and reports both errors rather than guessing caption timings. The provider that succeeds may incur API charges.
-- AI chooses only transcript-aligned boundaries for complete thoughts, prefers 10–15 seconds, then 20–25 seconds, and expands only as needed up to 60 seconds. Each accepted Short receives a quality score (minimum 8/10), score breakdown, and improvement notes. Hindi captions are burned into the rendered clips. If fewer than the requested number meet the quality threshold, fewer are returned.
+- Audio is transcribed locally with Whisper in configurable 10-minute chunks by default (`TRANSCRIPTION_CHUNK_SECONDS`, allowed 60–600 seconds). Text analysis is performed by the existing OpenAI and Gemini API keys. API usage may incur charges; free-tier quotas are not guaranteed or unlimited.
+- Whisper transcribes the source locally on the GitHub runner. OpenAI and Gemini then share transcript review in small batches, alternating providers. Every batch requires both an engaging hook and a complete, accurate religious context; neither criterion may be sacrificed for the other. TPM/RPM limits trigger wait-and-retry on the same batch. If one provider reaches a daily quota or fails, its unfinished batch is offered to the other provider. If both daily quotas are exhausted, the transcript and completed AI batches are saved in a 30-day checkpoint artifact. On the next manual run, enter the previous run ID in `resume_run_id`; the workflow restores the transcript and completed batches, skips Whisper re-transcription, and continues unfinished AI work. The logs report completed batches and API-reported token usage; when an API does not report usage, the log labels it as unavailable rather than inventing a count. AI chooses only transcript-aligned boundaries for complete thoughts, prefers 10–15 seconds, then 20–25 seconds, and expands only as needed up to 60 seconds. Each accepted Short receives a quality score (minimum 8/10), score breakdown, and improvement notes. Hindi captions are burned into the rendered clips. If fewer than the requested number meet the quality threshold, fewer are returned.
 - Review artifact is retained for 7 days.
 - Horizontal-source framing preserves the complete original image; only a blurred background duplicate is enlarged and cropped to fill the vertical canvas.
 - Large uploads are handled as GitHub Release assets, not committed to the repository's source tree.
