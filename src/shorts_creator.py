@@ -144,74 +144,246 @@ def transcribe(source):
     return utterances, sorted(set(transcription_providers)), sorted(set(transcription_models))
 
 
-def select(rows, count):
-    # Candidate boundaries are restricted to actual transcript row edges.
+def select(rows, count, resume_state=None):
+    """Review transcript batches across OpenAI and Gemini, checkpointing every batch."""
+    import hashlib
+    from src.ai_providers import provider_limit_kind
+
+    providers = [
+        ("openai", "OPENAI_API_KEY"),
+        ("gemini", "GEMINI_API_KEY"),
+    ]
+    providers = [(name, key) for name, key in providers if os.getenv(key)]
+    if not providers:
+        raise RuntimeError("Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured.")
+
     boundaries = sorted(set(round(float(x), 2) for row in rows
                             for x in (row["start"], row["start"] + row["duration"])))
-    transcript = "\n".join(
+    transcript_rows = [
         f"[{row['start']:.2f}s - {row['start'] + row['duration']:.2f}s] {row['text']}"
         for row in rows
-    )[:65000]
-    prompt = f"""Act as a senior professional Hindi short-video editor.
-Select up to {count} distinct, self-contained moments from this transcript.
-Rules: never cut a sentence, phrase, word, or thought in half; preserve original meaning and context; no invented speech; choose only start/end timestamps from the exact transcript row boundaries shown in brackets.
-Duration ladder: first try 10-15 seconds; if no complete thought fits, try 20-25 seconds; then 26-40; then 41-60. Maximum 60 seconds. Completeness is more important than duration. Return fewer than {count} if fewer excellent moments exist. Avoid overlapping/repeated topics.
-Rate honestly from 1-10 using: completeness/context 2, natural start/end 2, hook 2, Hindi/caption quality 2, technical suitability 2. Only return scores >=8. Explain score and improvements.
-Return ONLY JSON:
-{{"clips":[{{"start_seconds":12.3,"end_seconds":25.4,"hook":"हिन्दी हुक","title":"हिन्दी शीर्षक","description":"विवरण","hashtags":["#..."],"tags":["..."],"reason":"चयन का कारण","quality_score":9,"score_breakdown":{{"completeness":2,"boundaries":2,"hook":2,"captions":2,"technical":1}},"improvements":"सुधार","duration_tier":"10-15"}}]}}
-All text fields in Hindi. Transcript timestamps are source-video seconds.
-TRANSCRIPT:
-{transcript}"""
-    print("STEP 2/5: Selecting complete, high-quality moments from the Hindi transcript...", flush=True)
-    errors = []
-    for provider, key in (("openai", "OPENAI_API_KEY"), ("gemini", "GEMINI_API_KEY")):
-        if not os.getenv(key):
-            continue
-        try:
-            print(f"Requesting clip selection from {provider}...", flush=True)
-            raw, model = generate(provider, prompt)
-            print(f"Clip selection response received from {provider} ({model}).", flush=True)
-            raw = raw.strip()
-            if raw.startswith(chr(96) * 3):
-                raw = "\n".join(raw.splitlines()[1:-1])
-            try:
-                obj = json.loads(raw)
-            except json.JSONDecodeError:
-                left, right = raw.find("{"), raw.rfind("}")
-                obj = json.loads(raw[left:right + 1])
-            if not isinstance(obj, dict) or not isinstance(obj.get("clips"), list):
-                continue
-            valid = []
-            for item in obj["clips"]:
-                try:
-                    s0, e0 = float(item["start_seconds"]), float(item["end_seconds"])
-                    s = min(boundaries, key=lambda x: abs(x - s0))
-                    e = min(boundaries, key=lambda x: abs(x - e0))
-                    score = float(item.get("quality_score", 0))
-                    if (abs(s-s0) > 1.25 or abs(e-e0) > 1.25 or e <= s
-                            or not 10 <= e-s <= 60 or not 8 <= score <= 10
-                            or not item.get("title") or not item.get("hook")):
-                        continue
-                    item["start_seconds"], item["end_seconds"] = round(s, 2), round(e, 2)
-                    item["quality_score"] = score
-                    valid.append(item)
-                except (KeyError, TypeError, ValueError):
-                    continue
-            valid.sort(key=lambda x: x["quality_score"], reverse=True)
-            chosen = []
-            for item in valid:
-                s, e = item["start_seconds"], item["end_seconds"]
-                if any(s < old["end_seconds"] and e > old["start_seconds"] for old in chosen):
-                    continue
-                chosen.append(item)
-                if len(chosen) == count:
-                    break
-            return {"clips": chosen}, provider, model
-        except Exception as exc:
-            errors.append(provider + ": " + str(exc)[:250])
-    raise RuntimeError("No AI provider returned valid complete selections. " + "; ".join(errors))
+    ]
+    signature = hashlib.sha256("\n".join(transcript_rows).encode("utf-8")).hexdigest()
 
-def create(file_path, count, minimum, maximum, allow_short_test=False):
+    # Keep batches comfortably below the previous single 65k-character request.
+    batches, current, current_size = [], [], 0
+    for line in transcript_rows:
+        if current and current_size + len(line) > 12000:
+            batches.append(current)
+            current, current_size = [], 0
+        current.append(line)
+        current_size += len(line)
+    if current:
+        batches.append(current)
+
+    checkpoint_path = WORK / "ai_selection_checkpoint.json"
+    checkpoint = {
+        "version": 1,
+        "transcript_sha256": signature,
+        "total_batches": len(batches),
+        "completed_batches": {},
+        "token_usage": {"openai": {"input": 0, "output": 0, "total": 0},
+                        "gemini": {"input": 0, "output": 0, "total": 0}},
+        "provider_models": {},
+    }
+    if resume_state and Path(resume_state).is_file():
+        saved = json.loads(Path(resume_state).read_text(encoding="utf-8"))
+        if saved.get("transcript_sha256") != signature:
+            raise RuntimeError("Resume checkpoint belongs to a different transcript; refusing to mix videos.")
+        if int(saved.get("version", 0)) != 1:
+            raise RuntimeError("Unsupported AI resume checkpoint version.")
+        checkpoint.update(saved)
+        print(
+            f"RESUME: restoring {len(checkpoint.get('completed_batches', {}))}/"
+            f"{len(batches)} completed transcript batches.",
+            flush=True,
+        )
+
+    completed = checkpoint.setdefault("completed_batches", {})
+    usage_totals = checkpoint.setdefault("token_usage", {})
+    disabled_today = set()  # Daily quota resets are checked afresh on each new run.
+    batch_failures = []
+
+    def save_checkpoint():
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint["updated_at_utc"] = __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc
+        ).isoformat()
+        checkpoint_path.write_text(
+            json.dumps(checkpoint, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def parse_response(raw):
+        raw = raw.strip()
+        if raw.startswith(chr(96) * 3):
+            raw = "\n".join(raw.splitlines()[1:-1])
+        try:
+            obj = json.loads(raw)
+        except json.JSONDecodeError:
+            left, right = raw.find("{"), raw.rfind("}")
+            if left < 0 or right <= left:
+                raise ValueError("AI response did not contain JSON.")
+            obj = json.loads(raw[left:right + 1])
+        if not isinstance(obj, dict) or not isinstance(obj.get("clips"), list):
+            raise ValueError("AI response JSON did not contain a clips list.")
+        return obj["clips"]
+
+    for batch_index, batch in enumerate(batches):
+        batch_key = str(batch_index)
+        if batch_key in completed:
+            continue
+        transcript = "\n".join(batch)
+        prompt = f"""Act as a senior professional Hindi short-video editor and religious-context reviewer.
+Review ONLY this transcript batch from a Hindi discourse. Select up to 3 distinct, self-contained moments.
+Mandatory conditions: (1) a compelling natural hook, and (2) the complete religious thought/context must remain understandable. Never sacrifice scriptural meaning for a hook. Do not invent speech or add facts. Do not cut a sentence, phrase, word, or thought in half. Use only exact transcript row start/end timestamps.
+Duration: prefer 10-15 seconds; if no complete thought fits, try 20-25, then 26-40, then 41-60 seconds. Maximum 60 seconds. Completeness is more important than short duration. Avoid overlapping/repeated topics.
+Score honestly 1-10: hook strength, context completeness, natural boundaries, Hindi/caption quality, technical suitability. Return only candidates scoring at least 8/10 and explain both hook and context completeness.
+Return ONLY JSON:
+{{"clips":[{{"start_seconds":12.3,"end_seconds":25.4,"hook":"हिन्दी हुक","title":"हिन्दी शीर्षक","description":"विवरण","hashtags":["#..."],"tags":["..."],"reason":"हुक और प्रसंग की पूर्णता का कारण","quality_score":9,"score_breakdown":{{"completeness":2,"boundaries":2,"hook":2,"captions":2,"technical":1}},"improvements":"सुधार","duration_tier":"10-15"}}]}}
+All text fields in Hindi. Timestamps are source-video seconds. If no suitable complete moment exists, return an empty clips list.
+TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
+{transcript}"""
+        # Alternate the initial provider by batch. On quota/error, hand the same
+        # unfinished batch to the other provider.
+        preferred = providers[batch_index % len(providers):] + providers[:batch_index % len(providers)]
+        batch_done = False
+        tried = set()
+        for provider, key in preferred:
+            if provider in disabled_today or provider in tried:
+                continue
+            tried.add(provider)
+            if not os.getenv(key):
+                continue
+            for attempt in range(9):
+                try:
+                    print(
+                        f"AI REVIEW: batch {batch_index + 1}/{len(batches)} "
+                        f"({len(batch)} transcript rows), provider={provider}, attempt={attempt + 1}.",
+                        flush=True,
+                    )
+                    raw, model, usage = generate(provider, prompt)
+                    checkpoint.setdefault("provider_models", {})[provider] = model
+                    provider_usage = usage_totals.setdefault(
+                        provider, {"input": 0, "output": 0, "total": 0}
+                    )
+                    for field in ("input", "output", "total"):
+                        value = usage.get(field)
+                        if isinstance(value, (int, float)):
+                            provider_usage[field] = provider_usage.get(field, 0) + int(value)
+                    print(
+                        f"AI USAGE: {provider}; input={usage.get('input') if usage.get('input') is not None else 'not reported'}, "
+                        f"output={usage.get('output') if usage.get('output') is not None else 'not reported'}, "
+                        f"total={usage.get('total') if usage.get('total') is not None else 'not reported'} tokens "
+                        f"(API-reported={usage.get('reported_by_api', False)}).",
+                        flush=True,
+                    )
+                    valid = []
+                    for item in parse_response(raw):
+                        try:
+                            s0, e0 = float(item["start_seconds"]), float(item["end_seconds"])
+                            s = min(boundaries, key=lambda x: abs(x - s0))
+                            e = min(boundaries, key=lambda x: abs(x - e0))
+                            score = float(item.get("quality_score", 0))
+                            if (abs(s-s0) > 1.25 or abs(e-e0) > 1.25 or e <= s
+                                    or not 10 <= e-s <= 60 or not 8 <= score <= 10
+                                    or not item.get("title") or not item.get("hook")):
+                                continue
+                            item["start_seconds"], item["end_seconds"] = round(s, 2), round(e, 2)
+                            item["quality_score"] = score
+                            item["selected_by"] = provider
+                            item["source_batch"] = batch_index + 1
+                            valid.append(item)
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                    completed[batch_key] = {
+                        "provider": provider,
+                        "model": model,
+                        "candidate_count": len(valid),
+                        "clips": valid,
+                    }
+                    save_checkpoint()
+                    print(
+                        f"AI REVIEW COMPLETE: batch {batch_index + 1}/{len(batches)}; "
+                        f"{len(valid)} valid candidate(s) saved.",
+                        flush=True,
+                    )
+                    batch_done = True
+                    break
+                except Exception as exc:
+                    kind = provider_limit_kind(exc)
+                    message = str(exc).replace("\n", " ")[:500]
+                    if kind == "minute" and attempt < 8:
+                        wait_seconds = min(300, 60 * (attempt + 1))
+                        print(
+                            f"AI TPM/RPM LIMIT: {provider}; waiting {wait_seconds}s, "
+                            f"then retrying the same batch. Detail: {message}",
+                            flush=True,
+                        )
+                        __import__("time").sleep(wait_seconds)
+                        continue
+                    if kind == "daily":
+                        disabled_today.add(provider)
+                        print(
+                            f"AI DAILY QUOTA EXHAUSTED: {provider}; remaining work will be "
+                            f"offered to the other configured provider. Detail: {message}",
+                            flush=True,
+                        )
+                    else:
+                        print(
+                            f"AI PROVIDER FAILED: {provider}; handing this batch to the next "
+                            f"available provider. Detail: {message}",
+                            flush=True,
+                        )
+                    batch_failures.append(f"{provider}: {message}")
+                    break
+            if batch_done:
+                break
+
+        if not batch_done:
+            save_checkpoint()
+            done_count = len(completed)
+            if len(disabled_today) == len(providers):
+                raise RuntimeError(
+                    f"AI_DAILY_QUOTA_EXHAUSTED: both configured providers reached their daily "
+                    f"quota. Saved {done_count}/{len(batches)} batches in "
+                    f"{checkpoint_path}; resume on the next quota day."
+                )
+            raise RuntimeError(
+                f"AI_BATCH_INCOMPLETE: could not process batch {batch_index + 1}. "
+                f"Saved {done_count}/{len(batches)} batches for safe resume. "
+                + "; ".join(batch_failures[-4:])
+            )
+
+    candidates = []
+    for result in completed.values():
+        candidates.extend(result.get("clips", []))
+    candidates.sort(key=lambda item: float(item.get("quality_score", 0)), reverse=True)
+    chosen = []
+    for item in candidates:
+        s, e = item["start_seconds"], item["end_seconds"]
+        if any(s < old["end_seconds"] and e > old["start_seconds"] for old in chosen):
+            continue
+        chosen.append(item)
+        if len(chosen) == count:
+            break
+    if not chosen:
+        raise RuntimeError("Neither OpenAI nor Gemini found a valid complete Short in the transcript.")
+    provider_summary = ", ".join(
+        f"{name}:{len([v for v in completed.values() if v.get('provider') == name])} batches"
+        for name, _ in providers
+    )
+    model_summary = ", ".join(
+        f"{name}={model}" for name, model in checkpoint.get("provider_models", {}).items()
+    )
+    save_checkpoint()
+    print(
+        f"AI REVIEW SUMMARY: {len(completed)}/{len(batches)} batches complete; "
+        f"{len(candidates)} candidates; {len(chosen)} final selection(s).",
+        flush=True,
+    )
+    return {"clips": chosen}, provider_summary, model_summary
+
+def create(file_path, count, minimum, maximum, allow_short_test=False, resume_state=None):
     source_input = Path(file_path)
     if not source_input.is_file():
         raise FileNotFoundError(f"Uploaded source video not found: {source_input}")
@@ -245,7 +417,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
     print("STEP 1/5: Starting audio transcription.", flush=True)
     rows, transcription_providers, transcription_models = transcribe(source)
     print("STEP 2/5: Transcript ready; starting clip selection.", flush=True)
-    selected, provider, model = select(rows, count)
+    selected, provider, model = select(rows, count, resume_state=resume_state)
     print(f"CLIP SELECTION COMPLETE: {len(selected.get('clips', []))} candidates returned.", flush=True)
     clips = []
     for item in selected["clips"]:
@@ -344,7 +516,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False):
         "source_duration_seconds": duration,
         "framing": ("Original horizontal frame fully preserved in center; blurred background fills 9:16 canvas" if is_horizontal else "Original vertical frame proportionally fitted; no crop"),
         "transcription": "Generated from uploaded video audio",
-        "transcription_chunk_seconds": int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "60")),
+        "transcription_chunk_seconds": int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "600")),
         "transcription_providers": transcription_providers,
         "transcription_models": transcription_models,
         "ai_provider": provider,
@@ -383,7 +555,7 @@ def main():
     args = parser.parse_args()
     print("SHORTS PACKAGE:", create(
         args.file, args.count, args.min_seconds, args.max_seconds,
-        allow_short_test=args.allow_short_test
+        allow_short_test=args.allow_short_test, resume_state=args.resume_state
     ))
     print("No YouTube upload, metadata change, or publication was performed.")
 
