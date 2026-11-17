@@ -68,8 +68,9 @@ jobs:
           WHISPER_MODEL: small
           WHISPER_COMPUTE_TYPE: int8
           WHISPER_CPU_THREADS: 4
+          TRANSCRIPTION_CHUNK_SECONDS: 600
         run: |
-          python -m src.shorts_creator \
+          python -u -m src.shorts_creator \
             --file "source_upload/${{ inputs.video_asset }}" \
             --count 2 \
             --min-seconds 10 \
