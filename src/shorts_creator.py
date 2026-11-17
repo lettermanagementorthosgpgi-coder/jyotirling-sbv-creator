@@ -466,6 +466,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False, resume_st
             "hashtags": item.get("hashtags", [])[:15],
             "tags": item.get("tags", [])[:30],
             "reason": str(item.get("reason", ""))[:400],
+            "selected_by": str(item.get("selected_by", ""))[:30],
         })
         if len(clips) >= count:
             break
@@ -544,6 +545,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False, resume_st
         "transcription_models": transcription_models,
         "ai_provider": provider,
         "ai_model": model,
+        "ai_batch_processing": (json.loads(checkpoint_path.read_text(encoding="utf-8")) if checkpoint_path.is_file() else {}),
         "requested_shorts": count,
                "created_shorts": len(clips),
                "selection_policy": "10-15s first, then 20-25s, then longer complete thoughts up to 60s",
