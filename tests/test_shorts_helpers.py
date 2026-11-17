@@ -10,6 +10,20 @@ class ShortsHelpersTest(unittest.TestCase):
     def test_timecode_hours(self):
         self.assertEqual(timecode(3661.5), "01:01:01,500")
 
+    def test_atomic_checkpoint_write(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from src.shorts_creator import _atomic_json
+
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "part_001.json"
+            _atomic_json(target, {"part_index": 1, "segments": [{"text": "परीक्षण"}]})
+            saved = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(saved["part_index"], 1)
+            self.assertEqual(saved["segments"][0]["text"], "परीक्षण")
+            self.assertFalse(target.with_suffix(".json.tmp").exists())
+
     def test_provider_quota_classification(self):
         from src.ai_providers import provider_limit_kind
         self.assertEqual(provider_limit_kind("HTTP 429 rate_limit_exceeded: tokens per minute"), "minute")
