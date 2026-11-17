@@ -39,7 +39,15 @@ def get_video_duration(source):
     return float(value)
 
 
-def transcribe(source):
+def _atomic_json(path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temporary.replace(path)
+
+
+def transcribe(source, resume_dir=None):
     audio_dir = WORK / "audio_chunks"
     audio_dir.mkdir(parents=True)
     chunk_seconds = int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "600"))
@@ -63,6 +71,9 @@ def transcribe(source):
     rows = []
     transcription_providers = []
     transcription_models = []
+    checkpoint_dir = WORK / "whisper_chunks"
+    checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    restored_dir = Path(resume_dir) / "whisper_chunks" if resume_dir else None
     for index, audio in enumerate(audio_files):
         offset = index * chunk_seconds
         print(
@@ -70,32 +81,54 @@ def transcribe(source):
             f"({offset // 60}-{(offset + chunk_seconds) // 60} min of source video).",
             flush=True,
         )
-        segments, provider, model = transcribe_audio(audio)
+        checkpoint_file = checkpoint_dir / f"part_{index + 1:03}.json"
+        restored_file = restored_dir / checkpoint_file.name if restored_dir else None
+        saved_part = None
+        if restored_file and restored_file.is_file():
+            saved_part = json.loads(restored_file.read_text(encoding="utf-8"))
+            if saved_part.get("chunk_seconds") != chunk_seconds or saved_part.get("part_index") != index + 1:
+                raise RuntimeError(f"Whisper checkpoint metadata mismatch: {restored_file.name}")
+            print(f"WHISPER RESUME: restored saved part {index + 1}/{len(audio_files)}.", flush=True)
+        elif checkpoint_file.is_file():
+            saved_part = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+            print(f"WHISPER RESUME: reusing local saved part {index + 1}/{len(audio_files)}.", flush=True)
+
+        if saved_part is None:
+            segments, provider, model = transcribe_audio(audio)
+            part_rows = []
+            for segment in segments or []:
+                text = unicodedata.normalize("NFC", re.sub(r"\s+", " ", str(segment.get("text", ""))).strip())
+                if not text:
+                    continue
+                start = float(segment.get("start", 0)) + offset
+                end = float(segment.get("end", start - offset)) + offset
+                part_rows.append({"start": start, "duration": max(0.1, end - start), "text": text})
+            saved_part = {
+                "version": 1, "part_index": index + 1, "chunk_seconds": chunk_seconds,
+                "source_audio": audio.name, "source_offset_seconds": offset,
+                "provider": provider, "model": model, "has_speech": bool(part_rows),
+                "segments": part_rows,
+            }
+            _atomic_json(checkpoint_file, saved_part)
+            print(f"WHISPER CHECKPOINT SAVED: {checkpoint_file.name} ({len(part_rows)} segments).", flush=True)
+        provider = saved_part.get("provider", "restored-checkpoint")
+        model = saved_part.get("model", "restored-checkpoint")
         transcription_providers.append(provider)
         transcription_models.append(model)
-        if not segments:
+        part_rows = saved_part.get("segments", [])
+        if not part_rows:
             print(
                 f"TRANSCRIPTION: part {index + 1}/{len(audio_files)} contains no detected speech; "
-                "skipping it and continuing.",
+                "saved as an empty/silent part and continuing.",
                 flush=True,
             )
             continue
         print(
             f"TRANSCRIPTION: part {index + 1}/{len(audio_files)} complete "
-            f"({len(segments)} speech segments).",
+            f"({len(part_rows)} speech segments).",
             flush=True,
         )
-        for segment in segments:
-            text = unicodedata.normalize("NFC", re.sub(r"\s+", " ", str(segment.get("text", ""))).strip())
-            if not text:
-                continue
-            start = float(segment.get("start", 0)) + offset
-            end = float(segment.get("end", start - offset)) + offset
-            rows.append({
-                "start": start,
-                "duration": max(0.1, end - start),
-                "text": text,
-            })
+        rows.extend(part_rows)
     if not rows:
         raise RuntimeError(
             "No speech was detected in any audio part. Check that the source video contains audible speech."
@@ -305,6 +338,8 @@ TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
                         "provider": provider,
                         "model": model,
                         "candidate_count": len(valid),
+                        "transcript_batch": transcript,
+                        "raw_response": raw,
                         "clips": valid,
                     }
                     save_checkpoint()
@@ -434,7 +469,8 @@ def create(file_path, count, minimum, maximum, allow_short_test=False, resume_st
         )
     else:
         print("STEP 1/5: Starting audio transcription.", flush=True)
-        rows, transcription_providers, transcription_models = transcribe(source)
+        resume_dir = Path(resume_state).parent if resume_state else None
+        rows, transcription_providers, transcription_models = transcribe(source, resume_dir=resume_dir)
     print("STEP 2/5: Transcript ready; starting clip selection.", flush=True)
     selected, provider, model = select(
         rows, count, resume_state=resume_state,
@@ -587,6 +623,7 @@ def main():
         "--allow-short-test", action="store_true",
         help="Allow a source video of 10 minutes or less for a controlled test only."
     )
+    parser.add_argument("--resume-state", help="Path to a previous AI checkpoint JSON file.")
     args = parser.parse_args()
     print("SHORTS PACKAGE:", create(
         args.file, args.count, args.min_seconds, args.max_seconds,
