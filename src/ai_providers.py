@@ -87,6 +87,12 @@ def generate(provider, prompt):
 def provider_limit_kind(error):
     """Return daily, minute, or other from provider quota/rate-limit errors."""
     message = str(error).lower()
+    explicit_minute_markers = (
+        "rate_limit", "too many requests", "requestsperminute",
+        "tokensperminute", "per minute", "per_minute",
+    )
+    if any(marker in message for marker in explicit_minute_markers):
+        return "minute"
     daily_markers = (
         "insufficient_quota", "quota exceeded for the day", "per day",
         "requestsperday", "tokensperday", "daily limit", "daily quota",
@@ -94,13 +100,12 @@ def provider_limit_kind(error):
     )
     if any(marker in message for marker in daily_markers):
         return "daily"
-    minute_markers = (
-        "rate_limit", "too many requests", "http 429", "resource_exhausted",
-        "requestsperminute", "tokensperminute", "per minute", "per_minute",
-    )
-    if any(marker in message for marker in minute_markers):
+    if "quota" in message and ("exceeded" in message or "limit" in message):
+        return "daily"
+    if "http 429" in message or "resource_exhausted" in message:
         return "minute"
     return "other"
+
 
 def _transcribe_openai(path):
     key = os.getenv("OPENAI_API_KEY")
