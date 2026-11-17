@@ -56,14 +56,35 @@ jobs:
           VIDEO_ASSET: ${{ inputs.video_asset }}
         run: |
           mkdir -p source_upload
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir source_upload --pattern "$VIDEO_ASSET"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > source_upload/release.json
           python - <<'PY'
+          import json
           import os
           from pathlib import Path
-          selected = Path("source_upload") / os.environ["VIDEO_ASSET"]
-          if not selected.is_file():
-              raise SystemExit(f"Requested video asset was not found in Release: {selected.name}")
-          print(f"Selected source video: {selected.name}")
+          from urllib.request import Request, urlopen
+
+          release = json.loads(Path("source_upload/release.json").read_text(encoding="utf-8"))
+          asset_name = os.environ["VIDEO_ASSET"]
+          asset = next((item for item in release.get("assets", []) if item.get("name") == asset_name), None)
+          if asset is None:
+              available = ", ".join(item.get("name", "") for item in release.get("assets", []))
+              raise SystemExit(
+                  f"Asset {asset_name!r} was not found in release {release.get('tag_name')!r}. "
+                  f"Available assets: {available or '(none)'}"
+              )
+
+          destination = Path("source_upload") / asset_name
+          request = Request(asset["browser_download_url"], headers={"User-Agent": "jyotirling-youtube-shorts"})
+          print(f"Downloading release asset: {asset_name} ({asset.get('size', 0)} bytes)", flush=True)
+          with urlopen(request, timeout=120) as response, destination.open("wb") as output:
+              while True:
+                  block = response.read(1024 * 1024)
+                  if not block:
+                      break
+                  output.write(block)
+          if not destination.is_file() or destination.stat().st_size != asset.get("size"):
+              raise SystemExit(f"Downloaded asset size does not match GitHub release metadata: {destination}")
+          print(f"Selected source video: {destination.name} ({destination.stat().st_size} bytes)", flush=True)
           PY
       - name: Restore AI checkpoint from previous run (optional)
         if: inputs.resume_run_id != ''
