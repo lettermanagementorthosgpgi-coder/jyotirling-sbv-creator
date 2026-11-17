@@ -144,7 +144,7 @@ def transcribe(source):
     return utterances, sorted(set(transcription_providers)), sorted(set(transcription_models))
 
 
-def select(rows, count, resume_state=None):
+def select(rows, count, resume_state=None, transcription_providers=None, transcription_models=None):
     """Review transcript batches across OpenAI and Gemini, checkpointing every batch."""
     import hashlib
     from src.ai_providers import provider_limit_kind
@@ -185,6 +185,9 @@ def select(rows, count, resume_state=None):
         "token_usage": {"openai": {"input": 0, "output": 0, "total": 0},
                         "gemini": {"input": 0, "output": 0, "total": 0}},
         "provider_models": {},
+        "transcript_rows": rows,
+        "transcription_providers": transcription_providers or [],
+        "transcription_models": transcription_models or [],
     }
     if resume_state and Path(resume_state).is_file():
         saved = json.loads(Path(resume_state).read_text(encoding="utf-8"))
@@ -227,6 +230,9 @@ def select(rows, count, resume_state=None):
         if not isinstance(obj, dict) or not isinstance(obj.get("clips"), list):
             raise ValueError("AI response JSON did not contain a clips list.")
         return obj["clips"]
+
+    # Persist the full Whisper transcript before making the first paid API call.
+    save_checkpoint()
 
     for batch_index, batch in enumerate(batches):
         batch_key = str(batch_index)
@@ -414,10 +420,27 @@ def create(file_path, count, minimum, maximum, allow_short_test=False, resume_st
     is_horizontal = source_width > source_height
 
     print(f"SOURCE: {source.name}; duration {duration / 60:.1f} minutes.", flush=True)
-    print("STEP 1/5: Starting audio transcription.", flush=True)
-    rows, transcription_providers, transcription_models = transcribe(source)
+    resume_data = None
+    if resume_state and Path(resume_state).is_file():
+        resume_data = json.loads(Path(resume_state).read_text(encoding="utf-8"))
+    if resume_data and isinstance(resume_data.get("transcript_rows"), list) and resume_data["transcript_rows"]:
+        rows = resume_data["transcript_rows"]
+        transcription_providers = resume_data.get("transcription_providers", ["restored-checkpoint"])
+        transcription_models = resume_data.get("transcription_models", ["restored-checkpoint"])
+        print(
+            f"RESUME: restored {len(rows)} timestamped transcript rows; "
+            "skipping Whisper re-transcription.",
+            flush=True,
+        )
+    else:
+        print("STEP 1/5: Starting audio transcription.", flush=True)
+        rows, transcription_providers, transcription_models = transcribe(source)
     print("STEP 2/5: Transcript ready; starting clip selection.", flush=True)
-    selected, provider, model = select(rows, count, resume_state=resume_state)
+    selected, provider, model = select(
+        rows, count, resume_state=resume_state,
+        transcription_providers=transcription_providers,
+        transcription_models=transcription_models,
+    )
     print(f"CLIP SELECTION COMPLETE: {len(selected.get('clips', []))} candidates returned.", flush=True)
     clips = []
     for item in selected["clips"]:
