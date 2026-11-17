@@ -534,6 +534,16 @@ def create(file_path, count, minimum, maximum, allow_short_test=False, resume_st
         print(f"RENDER COMPLETE: Short {index}/{len(clips)} written with synced Hindi captions.", flush=True)
 
     print("STEP 4/5: Writing SEO metadata and review report.", flush=True)
+    checkpoint_report = {}
+    checkpoint_path = WORK / "ai_selection_checkpoint.json"
+    if checkpoint_path.is_file():
+        saved_checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+        checkpoint_report = {
+            "total_batches": saved_checkpoint.get("total_batches", 0),
+            "completed_batches": len(saved_checkpoint.get("completed_batches", {})),
+            "token_usage": saved_checkpoint.get("token_usage", {}),
+            "provider_models": saved_checkpoint.get("provider_models", {}),
+        }
     report = {
         "status": "success",
         "source_video_file": source_input.name,
@@ -545,7 +555,7 @@ def create(file_path, count, minimum, maximum, allow_short_test=False, resume_st
         "transcription_models": transcription_models,
         "ai_provider": provider,
         "ai_model": model,
-        "ai_batch_processing": (json.loads(checkpoint_path.read_text(encoding="utf-8")) if checkpoint_path.is_file() else {}),
+        "ai_batch_processing": checkpoint_report,
         "requested_shorts": count,
                "created_shorts": len(clips),
                "selection_policy": "10-15s first, then 20-25s, then longer complete thoughts up to 60s",
