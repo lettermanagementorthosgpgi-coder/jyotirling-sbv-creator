@@ -26,6 +26,7 @@ def _post(url, headers, body):
 
 
 def generate(provider, prompt):
+    """Generate text and return (text, model, token_usage)."""
     if provider == "openai":
         key = os.getenv("OPENAI_API_KEY")
         if not key:
@@ -44,7 +45,14 @@ def generate(provider, prompt):
         result = "\n".join(parts) or data.get("output_text", "")
         if not result:
             raise RuntimeError("OpenAI returned no text")
-        return result, model
+        usage = data.get("usage", {})
+        tokens = {
+            "input": usage.get("input_tokens"),
+            "output": usage.get("output_tokens"),
+            "total": usage.get("total_tokens"),
+            "reported_by_api": bool(usage),
+        }
+        return result, model, tokens
 
     if provider == "gemini":
         key = os.getenv("GEMINI_API_KEY")
@@ -64,10 +72,35 @@ def generate(provider, prompt):
         result = "\n".join(p.get("text", "") for p in parts if p.get("text"))
         if not result:
             raise RuntimeError("Gemini returned no text")
-        return result, model
+        usage = data.get("usageMetadata", {})
+        tokens = {
+            "input": usage.get("promptTokenCount"),
+            "output": usage.get("candidatesTokenCount"),
+            "total": usage.get("totalTokenCount"),
+            "reported_by_api": bool(usage),
+        }
+        return result, model, tokens
 
     raise RuntimeError(f"Unknown AI provider: {provider}")
 
+
+def provider_limit_kind(error):
+    """Return daily, minute, or other from provider quota/rate-limit errors."""
+    message = str(error).lower()
+    daily_markers = (
+        "insufficient_quota", "quota exceeded for the day", "per day",
+        "requestsperday", "tokensperday", "daily limit", "daily quota",
+        "free_tier_requests", "free_tier_tokens", "per_day",
+    )
+    if any(marker in message for marker in daily_markers):
+        return "daily"
+    minute_markers = (
+        "rate_limit", "too many requests", "http 429", "resource_exhausted",
+        "requestsperminute", "tokensperminute", "per minute", "per_minute",
+    )
+    if any(marker in message for marker in minute_markers):
+        return "minute"
+    return "other"
 
 def _transcribe_openai(path):
     key = os.getenv("OPENAI_API_KEY")
