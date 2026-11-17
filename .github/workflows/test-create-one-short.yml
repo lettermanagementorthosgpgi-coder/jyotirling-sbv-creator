@@ -13,6 +13,11 @@ on:
         required: true
         type: string
         default: "adhyay3.42rudra.mp4"
+      resume_run_id:
+        description: "Optional previous run ID containing a saved AI quota checkpoint"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -59,6 +64,16 @@ jobs:
               raise SystemExit(f"Requested video asset was not found in Release: {selected.name}")
           print(f"Selected source video: {selected.name}")
           PY
+      - name: Restore AI checkpoint from previous run (optional)
+        if: inputs.resume_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+        run: |
+          mkdir -p ai_resume
+          gh run download "$RESUME_RUN_ID" --repo "$GITHUB_REPOSITORY" --name jyotirling-ai-checkpoint --dir ai_resume
+          test -s ai_resume/ai_selection_checkpoint.json
+          echo "Restored AI checkpoint from run $RESUME_RUN_ID"
       - name: Create two complete-thought test Shorts
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -70,12 +85,25 @@ jobs:
           WHISPER_CPU_THREADS: 4
           TRANSCRIPTION_CHUNK_SECONDS: 600
         run: |
+          RESUME_ARGS=()
+          if [ -s ai_resume/ai_selection_checkpoint.json ]; then
+            RESUME_ARGS+=(--resume-state ai_resume/ai_selection_checkpoint.json)
+          fi
           python -u -m src.shorts_creator \
             --file "source_upload/${{ inputs.video_asset }}" \
             --count 2 \
             --min-seconds 10 \
             --max-seconds 60 \
-            --allow-short-test
+            --allow-short-test \
+            "${RESUME_ARGS[@]}"
+      - name: Save AI quota checkpoint for a later run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jyotirling-ai-checkpoint
+          path: shorts_work/ai_selection_checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Upload two-Short review ZIP
         uses: actions/upload-artifact@v4
         with:
