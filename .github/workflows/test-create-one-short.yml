@@ -73,8 +73,11 @@ jobs:
         run: |
           mkdir -p ai_resume
           gh run download "$RESUME_RUN_ID" --repo "$GITHUB_REPOSITORY" --name jyotirling-ai-checkpoint --dir ai_resume
-          test -s ai_resume/ai_selection_checkpoint.json
-          echo "Restored AI checkpoint from run $RESUME_RUN_ID"
+          if [ ! -s ai_resume/ai_selection_checkpoint.json ] && [ ! -d ai_resume/whisper_chunks ]; then
+            echo "No resumable Whisper or AI checkpoint found in run $RESUME_RUN_ID"
+            exit 1
+          fi
+          echo "Restored available Whisper/AI checkpoints from run $RESUME_RUN_ID"
       - name: Create two complete-thought test Shorts
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -87,7 +90,7 @@ jobs:
           TRANSCRIPTION_CHUNK_SECONDS: 600
         run: |
           RESUME_ARGS=()
-          if [ -s ai_resume/ai_selection_checkpoint.json ]; then
+          if [ -d ai_resume ]; then
             RESUME_ARGS+=(--resume-state ai_resume/ai_selection_checkpoint.json)
           fi
           python -u -m src.shorts_creator \
@@ -97,12 +100,14 @@ jobs:
             --max-seconds 60 \
             --allow-short-test \
             "${RESUME_ARGS[@]}"
-      - name: Save AI quota checkpoint for a later run
+      - name: Save latest Whisper and AI checkpoints for a later run
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: jyotirling-ai-checkpoint
-          path: shorts_work/ai_selection_checkpoint.json
+          path: |
+            shorts_work/ai_selection_checkpoint.json
+            shorts_work/whisper_chunks/*.json
           if-no-files-found: ignore
           retention-days: 30
       - name: Upload two-Short review ZIP
