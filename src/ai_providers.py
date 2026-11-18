@@ -102,7 +102,7 @@ def provider_error_kind(error):
             return "rate_limit"
         return "daily"
 
-    status_match = re.search(r"\\bhttp(?: error)?\\s+(\\d{3})\\b", message)
+    status_match = re.search(r"\bhttp(?: error)?\s+(\d{3})\b", message)
     status = int(status_match.group(1)) if status_match else None
     if status == 429 or "resource_exhausted" in message or "too many requests" in message:
         return "rate_limit"
@@ -120,25 +120,25 @@ def provider_error_kind(error):
 def retry_after_seconds(error):
     """Extract Retry-After or provider retryDelay values from an error message."""
     message = str(error).lower()
-    header = re.search(r"retry-after\\s*:\\s*(\\d+(?:\\.\\d+)?)", message)
+    header = re.search(r"retry-after\s*:\s*(\d+(?:\.\d+)?)", message)
     if header:
         return max(0, int(float(header.group(1))))
     # Provider bodies commonly say: 'Please retry in 22h56m12s'.
-    hours = re.search(r"(\\d+(?:\\.\\d+)?)\\s*h", message)
-    minutes = re.search(r"(\\d+(?:\\.\\d+)?)\\s*m", message)
-    seconds = re.search(r"(\\d+(?:\\.\\d+)?)\\s*s", message)
+    hours = re.search(r"(\d+(?:\.\d+)?)\s*h", message)
+    minutes = re.search(r"(\d+(?:\.\d+)?)\s*m", message)
+    seconds = re.search(r"(\d+(?:\.\d+)?)\s*s", message)
     total = 0.0
     for match, multiplier in ((hours, 3600), (minutes, 60), (seconds, 1)):
         if match:
             total += float(match.group(1)) * multiplier
     if total:
         return int(total)
-    retry_delay = re.search(r'"retrydelay"\\s*:\\s*"([^"]+)"', message)
+    retry_delay = re.search(r'"retrydelay"\s*:\s*"([^"]+)"', message)
     if retry_delay:
         value = retry_delay.group(1)
-        h = re.search(r"(\\d+(?:\\.\\d+)?)h", value)
-        m = re.search(r"(\\d+(?:\\.\\d+)?)m", value)
-        sec = re.search(r"(\\d+(?:\\.\\d+)?)s", value)
+        h = re.search(r"(\d+(?:\.\d+)?)h", value)
+        m = re.search(r"(\d+(?:\.\d+)?)m", value)
+        sec = re.search(r"(\d+(?:\.\d+)?)s", value)
         return int((float(h.group(1)) * 3600 if h else 0) +
                    (float(m.group(1)) * 60 if m else 0) +
                    (float(sec.group(1)) if sec else 0))
@@ -421,7 +421,7 @@ def transcribe_audio(audio_path):
             print(f"Audio transcription completed with {provider} ({model})")
             return segments, provider, model
         except Exception as exc:
-            message = str(exc).replace("\\n", " ")[:500]
+            message = str(exc).replace("\n", " ")[:500]
             print(f"{provider} transcription failed; trying next provider: {message}")
             errors.append(f"{provider}: {message}")
     raise RuntimeError("Transcription providers failed. " + "; ".join(errors))
