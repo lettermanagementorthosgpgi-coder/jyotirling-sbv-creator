@@ -51,7 +51,7 @@ def validate_corrected_rows(raw_rows, corrected_items, expected_ids):
             raise ValueError("Hindi proofreading returned a malformed row; refusing unverified captions.")
         row_id = entry["id"]
         corrected_text = unicodedata.normalize(
-            "NFC", re.sub(r"\\s+", " ", entry["text"]).strip()
+            "NFC", re.sub(r"\s+", " ", entry["text"]).strip()
         )
         if row_id in corrected_map or not corrected_text:
             raise ValueError("Hindi proofreading returned duplicate IDs or empty caption text.")
