@@ -39,6 +39,33 @@ def get_video_duration(source):
     return float(value)
 
 
+def validate_corrected_rows(raw_rows, corrected_items, expected_ids):
+    """Accept only one concise, non-empty correction for every expected source row."""
+    if not isinstance(corrected_items, list):
+        raise ValueError("Hindi proofreading did not return a row list.")
+    corrected_map = {}
+    for entry in corrected_items:
+        if (not isinstance(entry, dict)
+                or not isinstance(entry.get("id"), int)
+                or not isinstance(entry.get("text"), str)):
+            raise ValueError("Hindi proofreading returned a malformed row; refusing unverified captions.")
+        row_id = entry["id"]
+        corrected_text = unicodedata.normalize(
+            "NFC", re.sub(r"\\s+", " ", entry["text"]).strip()
+        )
+        if row_id in corrected_map or not corrected_text:
+            raise ValueError("Hindi proofreading returned duplicate IDs or empty caption text.")
+        if row_id not in expected_ids:
+            raise ValueError("Hindi proofreading returned an unknown row ID.")
+        original_text = raw_rows[row_id]["text"]
+        if len(corrected_text) > max(80, len(original_text) * 2):
+            raise ValueError(f"Hindi proofreading expanded row {row_id} too much; refusing possible paraphrase.")
+        corrected_map[row_id] = corrected_text
+    if sorted(corrected_map) != list(expected_ids):
+        raise ValueError("Hindi proofreading did not return exactly one correction for every row.")
+    return [corrected_map[row_id] for row_id in expected_ids]
+
+
 def _atomic_json(path, payload):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -215,7 +242,12 @@ def select(rows, count, resume_state=None, transcription_providers=None, transcr
         f"ROW_ID={index} [{row['start']:.2f}s - {row['start'] + row['duration']:.2f}s] {row['text']}"
         for index, row in enumerate(raw_rows)
     ]
-    signature = hashlib.sha256("\n".join(transcript_rows).encode("utf-8")).hexdigest()
+    # Preserve the pre-proofreading checkpoint signature so older runs can resume.
+    signature_rows = [
+        f"[{row['start']:.2f}s - {row['start'] + row['duration']:.2f}s] {row['text']}"
+        for row in raw_rows
+    ]
+    signature = hashlib.sha256("\n".join(signature_rows).encode("utf-8")).hexdigest()
 
     # Keep batches comfortably below the previous single 65k-character request.
     batches, current, current_size = [], [], 0
@@ -405,26 +437,13 @@ TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
                         flush=True,
                     )
                     response_obj = parse_response(raw)
-                    corrected_items = response_obj["corrected_rows"]
                     expected_ids = list(range(
                         sum(len(part) for part in batches[:batch_index]),
                         sum(len(part) for part in batches[:batch_index + 1])
                     ))
-                    corrected_map = {}
-                    for entry in corrected_items:
-                        if not isinstance(entry, dict) or not isinstance(entry.get("id"), int) or not isinstance(entry.get("text"), str):
-                            raise ValueError("Hindi proofreading returned a malformed row; refusing unverified captions.")
-                        row_id = entry["id"]
-                        corrected_text = unicodedata.normalize("NFC", re.sub(r"\s+", " ", entry["text"]).strip())
-                        if row_id in corrected_map or not corrected_text:
-                            raise ValueError("Hindi proofreading returned duplicate IDs or empty caption text.")
-                        original_text = raw_rows[row_id]["text"]
-                        if len(corrected_text) > max(80, len(original_text) * 2):
-                            raise ValueError(f"Hindi proofreading expanded row {row_id} too much; refusing possible paraphrase.")
-                        corrected_map[row_id] = corrected_text
-                    if sorted(corrected_map) != expected_ids:
-                        raise ValueError("Hindi proofreading did not return exactly one correction for every row.")
-                    corrected_rows = [corrected_map[row_id] for row_id in expected_ids]
+                    corrected_rows = validate_corrected_rows(
+                        raw_rows, response_obj["corrected_rows"], expected_ids
+                    )
                     batch_start_index = expected_ids[0]
                     for offset, corrected_text in enumerate(corrected_rows):
                         rows[batch_start_index + offset]["text"] = corrected_text
