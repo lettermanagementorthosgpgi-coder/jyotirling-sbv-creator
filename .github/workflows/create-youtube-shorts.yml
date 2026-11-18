@@ -43,6 +43,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg fonts-noto-core fontconfig
           fc-cache -f
+      - name: Cache Hindi Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: whisper-medium-${{ runner.os }}-v1
+          restore-keys: |
+            whisper-medium-${{ runner.os }}-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -72,6 +79,13 @@ jobs:
           SHORTS_COUNT: ${{ inputs.shorts_count }}
           MIN_SECONDS: ${{ inputs.min_seconds }}
           MAX_SECONDS: ${{ inputs.max_seconds }}
+          TRANSCRIPTION_PROVIDER: local
+          TRANSCRIPTION_ALLOW_API_FALLBACK: "false"
+          WHISPER_LANGUAGE: hi
+          WHISPER_MODEL: medium
+          WHISPER_COMPUTE_TYPE: int8
+          WHISPER_CPU_THREADS: 4
+          TRANSCRIPTION_CHUNK_SECONDS: 600
         run: |
           python -m src.shorts_creator \
             --file "$(find source_upload -maxdepth 1 -type f | head -n 1)" \
