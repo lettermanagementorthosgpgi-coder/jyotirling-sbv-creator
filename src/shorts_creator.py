@@ -58,7 +58,7 @@ def validate_corrected_rows(raw_rows, corrected_items, expected_ids):
         if row_id not in expected_ids:
             raise ValueError("Hindi proofreading returned an unknown row ID.")
         original_text = raw_rows[row_id]["text"]
-        if len(corrected_text) > max(80, len(original_text) * 2):
+        if len(corrected_text) > max(40, len(original_text) * 2):
             raise ValueError(f"Hindi proofreading expanded row {row_id} too much; refusing possible paraphrase.")
         corrected_map[row_id] = corrected_text
     if sorted(corrected_map) != list(expected_ids):
@@ -447,6 +447,11 @@ TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
                     batch_start_index = expected_ids[0]
                     for offset, corrected_text in enumerate(corrected_rows):
                         rows[batch_start_index + offset]["text"] = corrected_text
+                    print(
+                        f"HINDI PROOFREADING COMPLETE: {len(corrected_rows)} transcript rows corrected/checked "
+                        f"in batch {batch_index + 1}/{len(batches)}; timestamps preserved.",
+                        flush=True,
+                    )
                     valid = []
                     for item in response_obj["clips"]:
                         try:
@@ -743,7 +748,8 @@ def create(file_path, count, minimum, maximum, allow_short_test=False, resume_st
         "source_video_file": source_input.name,
         "source_duration_seconds": duration,
         "framing": ("Original horizontal frame fully preserved in center; blurred background fills 9:16 canvas" if is_horizontal else "Original vertical frame proportionally fitted; no crop"),
-        "transcription": "Generated from uploaded video audio",
+        "transcription": "Local Hindi Whisper medium model with scripture vocabulary prompt",
+        "hindi_proofreading": "Every transcript row proofread in context by the AI reviewer; original row timestamps preserved; unclear words are not guessed",
         "transcription_chunk_seconds": int(os.getenv("TRANSCRIPTION_CHUNK_SECONDS", "600")),
         "transcription_providers": transcription_providers,
         "transcription_models": transcription_models,
