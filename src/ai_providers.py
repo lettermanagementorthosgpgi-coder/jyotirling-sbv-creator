@@ -37,7 +37,7 @@ def generate(provider, prompt):
         data = _post(
             "https://api.openai.com/v1/responses",
             {"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            {"model": model, "input": prompt, "max_output_tokens": 5000},
+            {"model": model, "input": prompt, "max_output_tokens": 8000},
         )
         parts = []
         for item in data.get("output", []):
@@ -66,7 +66,7 @@ def generate(provider, prompt):
             {"x-goog-api-key": key, "Content-Type": "application/json"},
             {
                 "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-                "generationConfig": {"maxOutputTokens": 5000},
+                "generationConfig": {"maxOutputTokens": 8000},
             },
         )
         candidates = data.get("candidates", [])
