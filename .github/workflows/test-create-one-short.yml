@@ -107,6 +107,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TRANSCRIPTION_PROVIDER: local
           TRANSCRIPTION_ALLOW_API_FALLBACK: "false"
+          WHISPER_LANGUAGE: hi
           WHISPER_MODEL: medium
           WHISPER_COMPUTE_TYPE: int8
           WHISPER_CPU_THREADS: 4
