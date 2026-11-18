@@ -10,7 +10,8 @@ from pathlib import Path
 from src.ai_providers import transcribe_audio
 from src.shorts_creator import timecode
 
-WORK = Path("shorts_work")
+ROOT = Path(__file__).resolve().parents[1]
+WORK = ROOT / "shorts_work"
 CORRECTIONS = {
     "जैनी": "ज्ञानी",
     "जैनीं": "ज्ञानी",
