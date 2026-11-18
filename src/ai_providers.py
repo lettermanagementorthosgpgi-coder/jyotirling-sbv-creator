@@ -22,7 +22,9 @@ def _post(url, headers, body):
             return json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:1200]
-        raise RuntimeError(f"AI API HTTP {exc.code}: {detail}") from exc
+        retry_after = exc.headers.get("Retry-After", "")
+        retry_note = f"; Retry-After: {retry_after}" if retry_after else ""
+        raise RuntimeError(f"AI API HTTP {exc.code}{retry_note}: {detail}") from exc
 
 
 def generate(provider, prompt):
@@ -84,27 +86,69 @@ def generate(provider, prompt):
     raise RuntimeError(f"Unknown AI provider: {provider}")
 
 
-def provider_limit_kind(error):
-    """Return daily, minute, or other from provider quota/rate-limit errors."""
+def provider_error_kind(error):
+    """Classify AI failures so transient errors retry and permanent errors fail over."""
     message = str(error).lower()
-    explicit_minute_markers = (
-        "rate_limit", "too many requests", "requestsperminute",
-        "tokensperminute", "per minute", "per_minute",
-    )
-    if any(marker in message for marker in explicit_minute_markers):
-        return "minute"
     daily_markers = (
         "insufficient_quota", "quota exceeded for the day", "per day",
         "requestsperday", "tokensperday", "daily limit", "daily quota",
         "free_tier_requests", "free_tier_tokens", "per_day",
+        "billing_hard_limit", "billing limit", "resource_exhausted_per_day",
     )
     if any(marker in message for marker in daily_markers):
         return "daily"
     if "quota" in message and ("exceeded" in message or "limit" in message):
+        if any(marker in message for marker in ("per minute", "per_minute", "requestsperminute", "tokensperminute")):
+            return "rate_limit"
         return "daily"
-    if "http 429" in message or "resource_exhausted" in message:
-        return "minute"
-    return "other"
+
+    status_match = re.search(r"\\bhttp(?: error)?\\s+(\\d{3})\\b", message)
+    status = int(status_match.group(1)) if status_match else None
+    if status == 429 or "resource_exhausted" in message or "too many requests" in message:
+        return "rate_limit"
+    if status in (408, 425, 500, 502, 503, 504):
+        return "transient"
+    if status == 413:
+        return "payload"
+    if status in (400, 401, 403, 404):
+        return "permanent"
+    if any(word in message for word in ("timeout", "timed out", "connection reset", "connection error", "temporarily unavailable", "server busy")):
+        return "transient"
+    return "transient"
+
+
+def retry_after_seconds(error):
+    """Extract Retry-After or provider retryDelay values from an error message."""
+    message = str(error).lower()
+    header = re.search(r"retry-after\\s*:\\s*(\\d+(?:\\.\\d+)?)", message)
+    if header:
+        return max(0, int(float(header.group(1))))
+    # Provider bodies commonly say: 'Please retry in 22h56m12s'.
+    hours = re.search(r"(\\d+(?:\\.\\d+)?)\\s*h", message)
+    minutes = re.search(r"(\\d+(?:\\.\\d+)?)\\s*m", message)
+    seconds = re.search(r"(\\d+(?:\\.\\d+)?)\\s*s", message)
+    total = 0.0
+    for match, multiplier in ((hours, 3600), (minutes, 60), (seconds, 1)):
+        if match:
+            total += float(match.group(1)) * multiplier
+    if total:
+        return int(total)
+    retry_delay = re.search(r'"retrydelay"\\s*:\\s*"([^"]+)"', message)
+    if retry_delay:
+        value = retry_delay.group(1)
+        h = re.search(r"(\\d+(?:\\.\\d+)?)h", value)
+        m = re.search(r"(\\d+(?:\\.\\d+)?)m", value)
+        sec = re.search(r"(\\d+(?:\\.\\d+)?)s", value)
+        return int((float(h.group(1)) * 3600 if h else 0) +
+                   (float(m.group(1)) * 60 if m else 0) +
+                   (float(sec.group(1)) if sec else 0))
+    return None
+
+
+def provider_limit_kind(error):
+    """Backward-compatible quota classification."""
+    kind = provider_error_kind(error)
+    return "daily" if kind == "daily" else ("minute" if kind == "rate_limit" else "other")
 
 
 def _transcribe_openai(path):
