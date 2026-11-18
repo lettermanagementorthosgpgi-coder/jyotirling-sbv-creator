@@ -206,11 +206,14 @@ def select(rows, count, resume_state=None, transcription_providers=None, transcr
     if not providers:
         raise RuntimeError("Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured.")
 
-    boundaries = sorted(set(round(float(x), 2) for row in rows
+    # Keep an immutable raw transcript for checkpoint identity. Corrected caption text
+    # is stored separately so a resumed run can safely restore it without changing the hash.
+    raw_rows = [dict(row) for row in rows]
+    boundaries = sorted(set(round(float(x), 2) for row in raw_rows
                             for x in (row["start"], row["start"] + row["duration"])))
     transcript_rows = [
-        f"[{row['start']:.2f}s - {row['start'] + row['duration']:.2f}s] {row['text']}"
-        for row in rows
+        f"ROW_ID={index} [{row['start']:.2f}s - {row['start'] + row['duration']:.2f}s] {row['text']}"
+        for index, row in enumerate(raw_rows)
     ]
     signature = hashlib.sha256("\n".join(transcript_rows).encode("utf-8")).hexdigest()
 
@@ -234,7 +237,7 @@ def select(rows, count, resume_state=None, transcription_providers=None, transcr
         "token_usage": {"openai": {"input": 0, "output": 0, "total": 0},
                         "gemini": {"input": 0, "output": 0, "total": 0}},
         "provider_models": {},
-        "transcript_rows": rows,
+        "transcript_rows": raw_rows,
         "transcription_providers": transcription_providers or [],
         "transcription_models": transcription_models or [],
     }
@@ -252,6 +255,22 @@ def select(rows, count, resume_state=None, transcription_providers=None, transcr
         )
 
     completed = checkpoint.setdefault("completed_batches", {})
+    # Older checkpoints predate Hindi proofreading. Re-run those batches instead of
+    # silently producing captions from their uncorrected Whisper transcript.
+    for batch_key in list(completed):
+        saved_batch = completed.get(batch_key, {})
+        if not isinstance(saved_batch.get("corrected_rows"), list):
+            print(f"RESUME: batch {int(batch_key) + 1} has no Hindi-proofreading result; it will be reviewed again.", flush=True)
+            del completed[batch_key]
+    for batch_index, batch in enumerate(batches):
+        saved_batch = completed.get(str(batch_index))
+        if saved_batch:
+            corrected = saved_batch["corrected_rows"]
+            if len(corrected) != len(batch):
+                raise RuntimeError(f"Saved Hindi proofreading row count mismatch in batch {batch_index + 1}.")
+            start_index = sum(len(part) for part in batches[:batch_index])
+            for offset, corrected_text in enumerate(corrected):
+                rows[start_index + offset]["text"] = corrected_text
     usage_totals = checkpoint.setdefault("token_usage", {})
     disabled_today = set()  # Daily quota resets are checked afresh on each new run.
     disabled_permanently = set()
@@ -279,7 +298,9 @@ def select(rows, count, resume_state=None, transcription_providers=None, transcr
             obj = json.loads(raw[left:right + 1])
         if not isinstance(obj, dict) or not isinstance(obj.get("clips"), list):
             raise ValueError("AI response JSON did not contain a clips list.")
-        return obj["clips"]
+        if not isinstance(obj.get("corrected_rows"), list):
+            raise ValueError("AI response omitted mandatory corrected_rows Hindi proofreading.")
+        return obj
 
     # Persist the full Whisper transcript before making the first paid API call.
     save_checkpoint()
@@ -289,14 +310,25 @@ def select(rows, count, resume_state=None, transcription_providers=None, transcr
         if batch_key in completed:
             continue
         transcript = "\n".join(batch)
-        prompt = f"""Act as a senior professional Hindi short-video editor and religious-context reviewer.
-Review ONLY this transcript batch from a Hindi discourse. Select up to 3 distinct, self-contained moments.
-Mandatory conditions: (1) a compelling natural hook, and (2) the complete religious thought/context must remain understandable. Never sacrifice scriptural meaning for a hook. Do not invent speech or add facts. Do not cut a sentence, phrase, word, or thought in half. Use only exact transcript row start/end timestamps.
+        prompt = f"""You are a specialist Hindi/Devanagari proofreader and senior editor of Hindu scripture discourses.
+This batch has TWO mandatory tasks in one pass.
+
+TASK A — PROOFREAD EVERY TRANSCRIPT ROW for Hindi spelling and clear speech-recognition errors.
+- Preserve the speaker's exact spoken meaning, order, tone and wording. Correct spelling, matras, conjuncts and obvious ASR substitutions.
+- Use context to recognize Sanskrit/Hindu terms and proper nouns, e.g. भगवान, भगवद्गीता, शिवपुराण, रुद्र संहिता, सांख्ययोग, समबुद्धि, निष्काम कर्म, अर्जुन, भीष्म, क्षत्रिय, धर्म, पुण्य, पाप, ज्ञान, वैराग्य, भक्ति, सनत्कुमार, जलंधर, विष्णु, महादेव, पार्वती.
+- Do NOT paraphrase, summarize, modernize, add explanations, invent words, or complete speech that is not present.
+- If a word cannot be confidently heard from the transcript context, leave that word unchanged; do not guess.
+- Return exactly one corrected text for EVERY supplied ROW_ID, preserving row order and IDs. Keep timestamps outside the corrected text; never alter timestamps.
+- Keep each corrected row concise and close in length to its source row.
+
+TASK B — Select up to 3 distinct, self-contained Shorts from the corrected transcript.
+Mandatory: compelling natural hook AND complete religious thought/context. Never sacrifice scriptural meaning for a hook. Do not cut a sentence, phrase, word, or thought in half. Use only exact transcript row start/end timestamps.
 Duration: prefer 10-15 seconds; if no complete thought fits, try 20-25, then 26-40, then 41-60 seconds. Maximum 60 seconds. Completeness is more important than short duration. Avoid overlapping/repeated topics.
-Score honestly 1-10: hook strength, context completeness, natural boundaries, Hindi/caption quality, technical suitability. Return only candidates scoring at least 8/10 and explain both hook and context completeness.
-Return ONLY JSON:
-{{"clips":[{{"start_seconds":12.3,"end_seconds":25.4,"hook":"हिन्दी हुक","title":"हिन्दी शीर्षक","description":"विवरण","hashtags":["#..."],"tags":["..."],"reason":"हुक और प्रसंग की पूर्णता का कारण","quality_score":9,"score_breakdown":{{"completeness":2,"boundaries":2,"hook":2,"captions":2,"technical":1}},"improvements":"सुधार","duration_tier":"10-15"}}]}}
-All text fields in Hindi. Timestamps are source-video seconds. If no suitable complete moment exists, return an empty clips list.
+Score honestly 1-10: hook strength, context completeness, natural boundaries, Hindi/caption quality, technical suitability. Return only candidates scoring at least 8/10 and explain context completeness.
+
+Return ONLY valid JSON in this exact structure:
+{{"corrected_rows":[{{"id":0,"text":"सुधारा हुआ मूल वाक्य"}}],"clips":[{{"start_seconds":12.3,"end_seconds":25.4,"hook":"हिन्दी हुक","title":"हिन्दी शीर्षक","description":"विवरण","hashtags":["#..."],"tags":["..."],"reason":"हुक और प्रसंग की पूर्णता का कारण","quality_score":9,"score_breakdown":{{"completeness":2,"boundaries":2,"hook":2,"captions":2,"technical":1}},"improvements":"सुधार","duration_tier":"10-15"}}]}}
+All corrected_rows.text and clip text fields must be in Hindi. Timestamps are source-video seconds. If no suitable complete moment exists, return an empty clips list but still proofread every row.
 TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
 {transcript}"""
 
@@ -372,8 +404,32 @@ TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
                         f"(API-reported={usage.get('reported_by_api', False)}).",
                         flush=True,
                     )
+                    response_obj = parse_response(raw)
+                    corrected_items = response_obj["corrected_rows"]
+                    expected_ids = list(range(
+                        sum(len(part) for part in batches[:batch_index]),
+                        sum(len(part) for part in batches[:batch_index + 1])
+                    ))
+                    corrected_map = {}
+                    for entry in corrected_items:
+                        if not isinstance(entry, dict) or not isinstance(entry.get("id"), int) or not isinstance(entry.get("text"), str):
+                            raise ValueError("Hindi proofreading returned a malformed row; refusing unverified captions.")
+                        row_id = entry["id"]
+                        corrected_text = unicodedata.normalize("NFC", re.sub(r"\s+", " ", entry["text"]).strip())
+                        if row_id in corrected_map or not corrected_text:
+                            raise ValueError("Hindi proofreading returned duplicate IDs or empty caption text.")
+                        original_text = raw_rows[row_id]["text"]
+                        if len(corrected_text) > max(80, len(original_text) * 2):
+                            raise ValueError(f"Hindi proofreading expanded row {row_id} too much; refusing possible paraphrase.")
+                        corrected_map[row_id] = corrected_text
+                    if sorted(corrected_map) != expected_ids:
+                        raise ValueError("Hindi proofreading did not return exactly one correction for every row.")
+                    corrected_rows = [corrected_map[row_id] for row_id in expected_ids]
+                    batch_start_index = expected_ids[0]
+                    for offset, corrected_text in enumerate(corrected_rows):
+                        rows[batch_start_index + offset]["text"] = corrected_text
                     valid = []
-                    for item in parse_response(raw):
+                    for item in response_obj["clips"]:
                         try:
                             s0, e0 = float(item["start_seconds"]), float(item["end_seconds"])
                             s = min(boundaries, key=lambda x: abs(x - s0))
@@ -396,6 +452,7 @@ TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
                         "candidate_count": len(valid),
                         "transcript_batch": transcript,
                         "raw_response": raw,
+                        "corrected_rows": corrected_rows,
                         "clips": valid,
                     }
                     save_checkpoint()
