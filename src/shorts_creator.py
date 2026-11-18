@@ -9,7 +9,7 @@ import zipfile
 import unicodedata
 from pathlib import Path
 
-from src.ai_providers import generate, transcribe_audio
+from src.ai_providers import generate, transcribe_audio, provider_error_kind, retry_after_seconds
 
 ROOT = Path(__file__).resolve().parents[1]
 WORK = ROOT / "shorts_work"
@@ -195,11 +195,12 @@ def transcribe(source, resume_dir=None):
 def select(rows, count, resume_state=None, transcription_providers=None, transcription_models=None):
     """Review transcript batches across OpenAI and Gemini, checkpointing every batch."""
     import hashlib
-    from src.ai_providers import provider_limit_kind
+    import time
 
+    # Gemini is the preferred first provider; OpenAI is the immediate fallback.
     providers = [
-        ("openai", "OPENAI_API_KEY"),
         ("gemini", "GEMINI_API_KEY"),
+        ("openai", "OPENAI_API_KEY"),
     ]
     providers = [(name, key) for name, key in providers if os.getenv(key)]
     if not providers:
@@ -253,7 +254,8 @@ def select(rows, count, resume_state=None, transcription_providers=None, transcr
     completed = checkpoint.setdefault("completed_batches", {})
     usage_totals = checkpoint.setdefault("token_usage", {})
     disabled_today = set()  # Daily quota resets are checked afresh on each new run.
-    batch_failures = []
+    disabled_permanently = set()
+    cooldown_until = {}
 
     def save_checkpoint():
         checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -297,22 +299,61 @@ Return ONLY JSON:
 All text fields in Hindi. Timestamps are source-video seconds. If no suitable complete moment exists, return an empty clips list.
 TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
 {transcript}"""
-        # Alternate the initial provider by batch. On quota/error, hand the same
-        # unfinished batch to the other provider.
-        preferred = providers[batch_index % len(providers):] + providers[:batch_index % len(providers)]
+
         batch_done = False
-        tried = set()
-        for provider, key in preferred:
-            if provider in disabled_today or provider in tried:
+        while not batch_done:
+            now = time.monotonic()
+            eligible = [
+                (name, key) for name, key in providers
+                if name not in disabled_today
+                and name not in disabled_permanently
+                and now >= cooldown_until.get(name, 0)
+            ]
+
+            if not eligible:
+                active = [
+                    name for name, _ in providers
+                    if name not in disabled_today and name not in disabled_permanently
+                ]
+                if not active:
+                    save_checkpoint()
+                    done_count = len(completed)
+                    if len(disabled_today) == len(providers):
+                        raise RuntimeError(
+                            f"AI_DAILY_QUOTA_EXHAUSTED: both configured providers reached their daily "
+                            f"quota. Saved {done_count}/{len(batches)} batches in "
+                            f"{checkpoint_path}; resume after a provider quota resets."
+                        )
+                    raise RuntimeError(
+                        "AI_PROVIDERS_UNAVAILABLE: all configured providers returned permanent "
+                        "configuration/request errors. Check API keys, permissions, model names, "
+                        "billing and request settings. Checkpoint saved."
+                    )
+
+                next_wait = min(
+                    max(0, cooldown_until.get(name, now) - now) for name in active
+                )
+                if next_wait > 1200:
+                    save_checkpoint()
+                    raise RuntimeError(
+                        f"AI_RETRY_DEFERRED: all remaining providers are cooling down for more "
+                        f"than 20 minutes (earliest retry in about {int(next_wait)} seconds). "
+                        f"Saved {len(completed)}/{len(batches)} batches; resume this run later."
+                    )
+                print(
+                    "AI PROVIDERS TEMPORARILY UNAVAILABLE: both providers have been tried. "
+                    "Saving progress and waiting 20 minutes before restarting with Gemini.",
+                    flush=True,
+                )
+                save_checkpoint()
+                time.sleep(1200)
                 continue
-            tried.add(provider)
-            if not os.getenv(key):
-                continue
-            for attempt in range(9):
+
+            for provider, key in eligible:
                 try:
                     print(
                         f"AI REVIEW: batch {batch_index + 1}/{len(batches)} "
-                        f"({len(batch)} transcript rows), provider={provider}, attempt={attempt + 1}.",
+                        f"({len(batch)} transcript rows), provider={provider}.",
                         flush=True,
                     )
                     raw, model, usage = generate(provider, prompt)
@@ -366,49 +407,75 @@ TRANSCRIPT BATCH {batch_index + 1}/{len(batches)}:
                     batch_done = True
                     break
                 except Exception as exc:
-                    kind = provider_limit_kind(exc)
-                    message = str(exc).replace("\n", " ")[:500]
-                    if kind == "minute" and attempt < 8:
-                        wait_seconds = min(300, 60 * (attempt + 1))
-                        print(
-                            f"AI TPM/RPM LIMIT: {provider}; waiting {wait_seconds}s, "
-                            f"then retrying the same batch. Detail: {message}",
-                            flush=True,
-                        )
-                        __import__("time").sleep(wait_seconds)
-                        continue
+                    kind = provider_error_kind(exc)
+                    message = str(exc).replace("\n", " ")[:700]
                     if kind == "daily":
                         disabled_today.add(provider)
                         print(
-                            f"AI DAILY QUOTA EXHAUSTED: {provider}; remaining work will be "
-                            f"offered to the other configured provider. Detail: {message}",
+                            f"AI DAILY QUOTA EXHAUSTED: {provider}; disabling it for this run. "
+                            f"Detail: {message}",
+                            flush=True,
+                        )
+                    elif kind in ("permanent", "payload"):
+                        disabled_permanently.add(provider)
+                        print(
+                            f"AI PROVIDER CONFIGURATION/REQUEST ERROR: {provider}; not retrying "
+                            f"this provider in this run. Check key, permission, model, billing, "
+                            f"or request size. Detail: {message}",
                             flush=True,
                         )
                     else:
+                        retry_after = retry_after_seconds(exc)
+                        cooldown = max(120, retry_after or 120)
+                        cooldown_until[provider] = time.monotonic() + cooldown
                         print(
-                            f"AI PROVIDER FAILED: {provider}; handing this batch to the next "
-                            f"available provider. Detail: {message}",
+                            f"AI TEMPORARY ERROR: {provider}; next attempt for this provider "
+                            f"will wait at least {cooldown} seconds. Switching provider. "
+                            f"Detail: {message}",
                             flush=True,
                         )
-                    batch_failures.append(f"{provider}: {message}")
-                    break
-            if batch_done:
-                break
+                    save_checkpoint()
+                    # Give the alternate provider a two-minute hand-off window.
+                    if not batch_done:
+                        time.sleep(120)
 
-        if not batch_done:
-            save_checkpoint()
-            done_count = len(completed)
-            if len(disabled_today) == len(providers):
-                raise RuntimeError(
-                    f"AI_DAILY_QUOTA_EXHAUSTED: both configured providers reached their daily "
-                    f"quota. Saved {done_count}/{len(batches)} batches in "
-                    f"{checkpoint_path}; resume on the next quota day."
+            if not batch_done:
+                save_checkpoint()
+                if len(disabled_today) == len(providers):
+                    raise RuntimeError(
+                        f"AI_DAILY_QUOTA_EXHAUSTED: both configured providers reached their daily "
+                        f"quota. Saved {len(completed)}/{len(batches)} batches in "
+                        f"{checkpoint_path}; resume after a provider quota resets."
+                    )
+                if all(
+                    name in disabled_today or name in disabled_permanently
+                    for name, _ in providers
+                ):
+                    raise RuntimeError(
+                        "AI_PROVIDERS_UNAVAILABLE: all configured providers returned permanent "
+                        "or daily-quota errors. Checkpoint saved."
+                    )
+
+                active = [
+                    name for name, _ in providers
+                    if name not in disabled_today and name not in disabled_permanently
+                ]
+                next_wait = min(
+                    max(0, cooldown_until.get(name, time.monotonic()) - time.monotonic())
+                    for name in active
                 )
-            raise RuntimeError(
-                f"AI_BATCH_INCOMPLETE: could not process batch {batch_index + 1}. "
-                f"Saved {done_count}/{len(batches)} batches for safe resume. "
-                + "; ".join(batch_failures[-4:])
-            )
+                if next_wait > 1200:
+                    raise RuntimeError(
+                        f"AI_RETRY_DEFERRED: all remaining providers are cooling down for more "
+                        f"than 20 minutes (earliest retry in about {int(next_wait)} seconds). "
+                        f"Saved {len(completed)}/{len(batches)} batches; resume this run later."
+                    )
+                print(
+                    "AI PROVIDERS TEMPORARILY UNAVAILABLE: both providers have been tried. "
+                    "Waiting 20 minutes, then retrying Gemini-first.",
+                    flush=True,
+                )
+                time.sleep(1200)
 
     candidates = []
     for result in completed.values():
