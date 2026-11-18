@@ -41,9 +41,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/huggingface/hub
-          key: whisper-small-${{ runner.os }}-v1
+          key: whisper-medium-${{ runner.os }}-v1
           restore-keys: |
-            whisper-small-${{ runner.os }}-
+            whisper-medium-${{ runner.os }}-
 
       - name: Install dependencies
         run: |
@@ -107,7 +107,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           TRANSCRIPTION_PROVIDER: local
           TRANSCRIPTION_ALLOW_API_FALLBACK: "false"
-          WHISPER_MODEL: small
+          WHISPER_MODEL: medium
           WHISPER_COMPUTE_TYPE: int8
           WHISPER_CPU_THREADS: 4
           TRANSCRIPTION_CHUNK_SECONDS: 600
