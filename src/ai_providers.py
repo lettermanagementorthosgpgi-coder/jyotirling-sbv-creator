@@ -342,7 +342,7 @@ def _transcribe_local(path):
     global _LOCAL_WHISPER_MODEL, _LOCAL_WHISPER_MODEL_NAME
     from faster_whisper import WhisperModel
 
-    model_name = os.getenv("WHISPER_MODEL", "small")
+    model_name = os.getenv("WHISPER_MODEL", "medium")
     if _LOCAL_WHISPER_MODEL is None or _LOCAL_WHISPER_MODEL_NAME != model_name:
         print(f"Loading local Whisper model: {model_name}", flush=True)
         _LOCAL_WHISPER_MODEL = WhisperModel(
@@ -361,6 +361,13 @@ def _transcribe_local(path):
         beam_size=5,
         vad_filter=True,
         condition_on_previous_text=True,
+        initial_prompt=(
+            "यह शुद्ध हिंदी धार्मिक प्रवचन है। संस्कृत और सनातन धर्म के शब्दों को "
+            "सही देवनागरी में लिखें: भगवान, भगवद्गीता, शिवपुराण, रुद्र संहिता, "
+            "सांख्ययोग, समबुद्धि, निष्काम कर्म, अर्जुन, भीष्म, क्षत्रिय, धर्म, "
+            "पुण्य, पाप, ज्ञान, वैराग्य, भक्ति, सनत्कुमार, जलंधर, विष्णु, "
+            "महादेव, पार्वती, ब्रह्मा, कैलाश।"
+        ),
     )
     rows = []
     for segment in segments:
