@@ -37,7 +37,7 @@ class SBVTests(unittest.TestCase):
         candidates=[
             {"start_seconds":0,"end_seconds":15,"title":"एक ही शीर्षक","quality_score":9,"provider":"openai"},
             {"start_seconds":20,"end_seconds":35,"title":"एक ही शीर्षक","quality_score":9,"provider":"openai"},
-            {"start_seconds":10,"end_seconds":25,"title":"दूसरा शीर्षक","quality_score":9,"provider":"cloudflare"},
+            {"start_seconds":10,"end_seconds":25,"title":"दूसरा शीर्षक","quality_score":9,"provider":"openai"},
         ]
         selected=_select(candidates,10)
         self.assertEqual(len(selected),1)
