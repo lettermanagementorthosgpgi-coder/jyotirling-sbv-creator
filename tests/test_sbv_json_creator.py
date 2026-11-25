@@ -7,8 +7,17 @@ class SBVTests(unittest.TestCase):
         self.assertEqual(len(cues),2); self.assertEqual(cues[0]["text"],"पहली पंक्ति\nदूसरी पंक्ति"); self.assertEqual(cues[0]["end"],2.5)
     def test_invalid_timestamp(self):
         with self.assertRaises(ValueError): parse_sbv("गलत समय\nपाठ\n")
-    def test_overlap_rejected(self):
-        with self.assertRaises(ValueError): parse_sbv("0:00:00.000,0:00:03.000\nएक\n\n0:00:02.000,0:00:04.000\nदो\n")
+    def test_overlapping_cues_are_trimmed_without_losing_text(self):
+        cues=parse_sbv("0:00:00.000,0:00:03.000\nपहला वाक्य\n\n0:00:02.500,0:00:04.000\nदूसरा वाक्य\n")
+        self.assertEqual(len(cues),2)
+        self.assertEqual(cues[0]["end"],2.5)
+        self.assertEqual(cues[1]["start"],2.5)
+        self.assertEqual(cues[0]["text"],"पहला वाक्य")
+        self.assertEqual(cues[1]["text"],"दूसरा वाक्य")
+
+    def test_same_start_overlap_is_rejected_as_unsafe(self):
+        with self.assertRaisesRegex(ValueError,"Cannot safely normalize"):
+            parse_sbv("0:00:00.000,0:00:03.000\nएक\n\n0:00:00.000,0:00:04.000\nदो\n")
     def test_batches_keep_every_cue(self):
         cues=[{"start":i*10.0,"end":i*10.0+2,"text":str(i)} for i in range(80)]
         batches=make_batches(cues,100); self.assertEqual(sum(map(len,batches)),80); self.assertEqual([c for b in batches for c in b],cues)

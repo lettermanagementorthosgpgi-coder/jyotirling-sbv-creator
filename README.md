@@ -32,7 +32,7 @@ The input SBV Creator Release must contain exactly one `.sbv` file. The target L
 
 ## Quality and safety rules
 
-- The entire SBV is parsed and every cue is accounted for; long transcripts are batched without dropping the end of the file.
+- The entire SBV is parsed and every cue is accounted for; long transcripts are batched without dropping the end of the file. If adjacent SBV cue intervals overlap, only the earlier cue's end time is trimmed to the next cue's start; all original caption text and cue start times are preserved. Same-start or out-of-order cues that cannot be normalized safely are rejected.
 - All three configured AI providers independently review every batch. Provider failures are written to the report; no candidate is accepted below 8/10.
 - Candidate clips must be 10–60 seconds, have valid transcript boundaries, and not overlap with other selected clips.
 - Hindi subtitles are reconstructed verbatim from SBV and converted to clip-relative timestamps. No AI-generated subtitle text is used.

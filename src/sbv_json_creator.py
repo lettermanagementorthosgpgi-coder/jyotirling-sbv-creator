@@ -23,8 +23,38 @@ def parse_sbv(text):
         spoken="\n".join(caption).strip()
         if spoken: cues.append({"start":round(start,3),"end":round(end,3),"text":spoken})
     if not cues: raise ValueError("The SBV file contains no readable caption cues.")
+    normalize_overlapping_cues(cues)
     validate_cues(cues)
     return cues
+
+def normalize_overlapping_cues(cues):
+    """Keep cue text and start times intact while removing timing overlaps.
+
+    YouTube SBV exports can contain overlapping cue intervals. The Shorts
+    renderer requires sequential subtitle intervals, so the earlier cue is
+    ended exactly when the next cue begins. No caption text is discarded.
+    """
+    normalized = 0
+    for number, (previous, current) in enumerate(zip(cues, cues[1:]), 1):
+        if current["start"] < previous["start"]:
+            raise ValueError("SBV cues are not in chronological order.")
+        if current["start"] < previous["end"]:
+            if current["start"] <= previous["start"]:
+                raise ValueError(
+                    f"Cannot safely normalize overlapping SBV cues near cue {number}: "
+                    "two cues have the same or descending start time."
+                )
+            previous["end"] = round(current["start"], 3)
+            if previous["end"] <= previous["start"]:
+                raise ValueError(f"Overlap leaves SBV cue {number} with no display time.")
+            normalized += 1
+    if normalized:
+        print(
+            f"Normalized {normalized} overlapping SBV cue boundary/boundaries; "
+            "all original caption text and cue start times were preserved.",
+            flush=True,
+        )
+    return normalized
 
 def validate_cues(cues):
     for n,c in enumerate(cues,1):
