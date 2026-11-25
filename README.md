@@ -8,7 +8,7 @@ This repository does not download videos, transcribe audio, create SBV files, re
 2. Open Actions → SBV Research and Live JSON Publisher → Run workflow.
 3. Enter the SBV input Release tag. Set the Live Release tag to Friday (or another existing tag). Choose a maximum of 5, 7, or 10 Shorts.
 4. The workflow parses every SBV cue, divides the full transcript into timestamp-based batches, and sends each larger transcript batch to OpenAI only. Gemini and Cloudflare are not called.
-5. The providers propose complete-thought clips. Python rejects invalid durations/timestamps and reconstructs subtitles directly from the original SBV text; AI is never allowed to write or paraphrase subtitles.
+5. OpenAI proposes complete-thought clips. Python rejects invalid durations/timestamps and reconstructs subtitles directly from the original SBV text; AI is never allowed to write or paraphrase subtitles.
 6. The workflow validates shorts_manifest.json and deletes every existing asset from the target Live Release, including any old `source.mp4`, old manifest, and previously generated Shorts; then uploads only the newly generated `shorts_manifest.json`.
 7. Open the Live repository and manually run Actions → Jyotirling Shivmath YouTube Shorts Creator with that same Release tag (for example, Friday). Only after the SBV Creator workflow finishes and the Release contains only `shorts_manifest.json`, manually upload the new `source.mp4` to that Friday Release. Then run the Live workflow; it reads both files and generates the Shorts.
 
