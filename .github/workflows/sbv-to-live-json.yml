@@ -84,7 +84,7 @@ jobs:
                   if float(sub["start_seconds"])<0 or float(sub["end_seconds"])<=float(sub["start_seconds"]) or not sub.get("text"): raise SystemExit(f"Short {n}: invalid subtitle.")
           print(f"Live manifest contract passed: {len(shorts)} Shorts.")
           PY
-      - name: Replace old manifest and generated Shorts while preserving manually uploaded source.mp4
+      - name: Clear every old asset and publish only the new JSON
         env:
           GH_TOKEN: ${{ secrets.LIVE_REPO_TOKEN }}
           LIVE_REPOSITORY: lettermanagementorthosgpgi-coder/jyotirlingshivmathlive
@@ -93,26 +93,16 @@ jobs:
           set -euo pipefail
           test -n "$GH_TOKEN" || { echo "::error::Add LIVE_REPO_TOKEN with write access to jyotirlingshivmathlive."; exit 1; }
           gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" >/dev/null
-          gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" >/dev/null
-          export ASSETS_BEFORE="$(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '[.assets[].name]')"
-          python - <<'PY'
-          import json, os
-          assets=json.loads(os.environ["ASSETS_BEFORE"])
-          videos=[name for name in assets if name=="source.mp4"]
-          if len(videos)!=1:
-              raise SystemExit(f"Friday Release must already contain exactly one manually uploaded source.mp4; found {len(videos)}.")
-          PY
-          echo "Preserving manually uploaded source.mp4; removing all other old assets."
+          echo "Deleting ALL existing assets from $LIVE_REPOSITORY release $LIVE_RELEASE_TAG, including old source.mp4 and Shorts."
           while IFS= read -r asset; do
             [ -n "$asset" ] || continue
-            [ "$asset" = "source.mp4" ] && continue
-            echo "Deleting old generated/manifest asset: $asset"
+            echo "Deleting old release asset: $asset"
             gh release delete-asset "$LIVE_RELEASE_TAG" "$asset" --yes --repo "$LIVE_REPOSITORY"
           done < <(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '.assets[].name')
           gh release upload "$LIVE_RELEASE_TAG" shorts_manifest.json --repo "$LIVE_REPOSITORY"
-          echo "Published shorts_manifest.json; kept source.mp4 unchanged."
-          assets="$(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '[.assets[].name] | sort | join(",")')"
-          [ "$assets" = "shorts_manifest.json,source.mp4" ] || { echo "::error::Expected only shorts_manifest.json and source.mp4 after publishing; found: $assets"; exit 1; }
+          echo "Published shorts_manifest.json as the ONLY asset. Upload the new source.mp4 manually AFTER this workflow finishes."
+          assets="$(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '[.assets[].name] | join(",")')"
+          [ "$assets" = "shorts_manifest.json" ] || { echo "::error::Expected only shorts_manifest.json after cleanup; found: $assets"; exit 1; }
       - name: Upload research report
         if: always()
         uses: actions/upload-artifact@v4
