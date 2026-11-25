@@ -142,9 +142,9 @@ def create_manifest(sbv_path,output_path,count=10,minimum=10,maximum=60):
     available=[]
     if os.getenv("OPENAI_API_KEY"): available.append("openai")
     if os.getenv("GEMINI_API_KEY"): available.append("gemini")
-    missing=sorted(set(PROVIDERS)-set(available))
-    if missing: raise RuntimeError("Both configured AI reviewers are required; missing: "+", ".join(missing))
-    candidates=[]; failures=[]
+    if "openai" not in available:
+        raise RuntimeError("OPENAI_API_KEY is required; OpenAI is the primary reviewer.")
+    candidates=[]; failures=[]; fallbacks=[]
     for n,batch in enumerate(batches,1):
         print(f"Reviewing complete transcript batch {n}/{len(batches)} ({len(batch)} cues).",flush=True)
         for provider in available:
@@ -159,13 +159,40 @@ def create_manifest(sbv_path,output_path,count=10,minimum=10,maximum=60):
                         if found: found["model"]=model; candidates.append(found); accepted+=1
                 print(f"{provider} ({model}): {accepted} candidate(s).",flush=True)
             except Exception as exc:
-                failures.append(f"{provider} batch {n}: {type(exc).__name__}: {exc}")
-                print("WARNING: "+failures[-1],flush=True)
+                message=f"{provider} batch {n}: {type(exc).__name__}: {exc}"
+                print("WARNING: "+message,flush=True)
+                if provider == "openai":
+                    failures.append(message)
+                elif provider == "gemini":
+                    # Gemini is optional. When it is unavailable, OpenAI performs
+                    # a second-pass review of this same batch.
+                    try:
+                        print(f"Gemini unavailable on batch {n}; requesting OpenAI fallback review.",flush=True)
+                        fallback_prompt=_prompt(batch,n,len(batches),minimum,maximum) + (
+                            "\\nGemini is unavailable. Perform a careful second-pass review as the "
+                            "sole available reviewer for this batch. Return the same JSON schema."
+                        )
+                        raw,model,_usage=generate("openai",fallback_prompt)
+                        items=_json(raw).get("candidates",[])
+                        if not isinstance(items,list): raise ValueError("OpenAI fallback candidates must be a list.")
+                        accepted=0
+                        for item in items:
+                            if isinstance(item,dict):
+                                found=_candidate(item,batch,"openai",minimum,maximum)
+                                if found: found["model"]=model; candidates.append(found); accepted+=1
+                        fallbacks.append(f"Gemini unavailable on batch {n}; OpenAI fallback completed.")
+                        print(f"openai fallback ({model}): {accepted} candidate(s).",flush=True)
+                    except Exception as fallback_exc:
+                        failures.append(
+                            f"Gemini and OpenAI fallback failed on batch {n}: "
+                            f"{type(fallback_exc).__name__}: {fallback_exc}"
+                        )
+                        print("WARNING: "+failures[-1],flush=True)
     # Fail closed: never create/publish a manifest from a partial AI review.
     if failures:
         report={"sbv_file":path.name,"cue_count":len(cues),"batch_count":len(batches),
                 "providers":available,"candidate_count":len(candidates),"selected_count":0,
-                "warnings":failures,"status":"incomplete_ai_review"}
+                "warnings":failures,"fallbacks":fallbacks,"status":"incomplete_ai_review"}
         Path("sbv_review_report.json").write_text(
             json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"
         )
@@ -187,7 +214,7 @@ def create_manifest(sbv_path,output_path,count=10,minimum=10,maximum=60):
     report={"sbv_file":path.name,"cue_count":len(cues),"batch_count":len(batches),"providers":available,
             "candidate_count":len(candidates),"selected_count":len(shorts),
             "selected":[{k:x[k] for k in ("start_seconds","end_seconds","title","quality_score","reason","reviewers")} for x in selected],
-            "warnings":failures}
+            "warnings":failures,"fallbacks":fallbacks}
     Path("sbv_review_report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
     print(f"Manifest ready: {len(shorts)} Shorts from all {len(cues)} SBV cues.",flush=True)
     return manifest
