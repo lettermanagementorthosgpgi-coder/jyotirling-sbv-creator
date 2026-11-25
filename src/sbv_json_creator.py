@@ -142,9 +142,8 @@ def create_manifest(sbv_path,output_path,count=10,minimum=10,maximum=60):
     available=[]
     if os.getenv("OPENAI_API_KEY"): available.append("openai")
     if os.getenv("GEMINI_API_KEY"): available.append("gemini")
-    if os.getenv("CLOUDFLARE_API_TOKEN") and os.getenv("CLOUDFLARE_ACCOUNT_ID"): available.append("cloudflare")
     missing=sorted(set(PROVIDERS)-set(available))
-    if missing: raise RuntimeError("Three independent AI reviewers required; missing: "+", ".join(missing))
+    if missing: raise RuntimeError("Both configured AI reviewers are required; missing: "+", ".join(missing))
     candidates=[]; failures=[]
     for n,batch in enumerate(batches,1):
         print(f"Reviewing complete transcript batch {n}/{len(batches)} ({len(batch)} cues).",flush=True)
@@ -162,7 +161,19 @@ def create_manifest(sbv_path,output_path,count=10,minimum=10,maximum=60):
             except Exception as exc:
                 failures.append(f"{provider} batch {n}: {type(exc).__name__}: {exc}")
                 print("WARNING: "+failures[-1],flush=True)
-    if not candidates: raise RuntimeError("No valid candidates. "+" | ".join(failures[:6]))
+    # Fail closed: never create/publish a manifest from a partial AI review.
+    if failures:
+        report={"sbv_file":path.name,"cue_count":len(cues),"batch_count":len(batches),
+                "providers":available,"candidate_count":len(candidates),"selected_count":0,
+                "warnings":failures,"status":"incomplete_ai_review"}
+        Path("sbv_review_report.json").write_text(
+            json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"
+        )
+        raise RuntimeError(
+            "AI review incomplete; manifest generation and publishing are blocked. "
+            + " | ".join(failures[:8])
+        )
+    if not candidates: raise RuntimeError("No valid candidates after both AI reviewers completed all batches.")
     selected=_select(candidates,count)
     if not selected: raise RuntimeError("No non-overlapping candidates passed validation.")
     shorts=[]
