@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
     inputs:
       sbv_release_tag:
-        description: "Release tag in this repository containing exactly one .sbv file"
+        description: "Release tag in this repository containing exactly one .sbv and one source.mp4"
         required: true
         type: string
       live_release_tag:
@@ -35,7 +35,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-      - name: Download supplied SBV from this repository Release
+      - name: Download supplied SBV and source.mp4 from this repository Release
         env:
           GH_TOKEN: ${{ github.token }}
           SBV_RELEASE_TAG: ${{ inputs.sbv_release_tag }}
@@ -44,10 +44,14 @@ jobs:
           gh release download "$SBV_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir sbv_input
           python - <<'PY'
           from pathlib import Path
-          files = list(Path("sbv_input").glob("*.sbv"))
-          if len(files) != 1:
-              raise SystemExit(f"SBV Release must contain exactly one .sbv file; found {len(files)}.")
-          print(f"SBV input: {files[0].name} ({files[0].stat().st_size} bytes)")
+          sbv_files = list(Path("sbv_input").glob("*.sbv"))
+          video = Path("sbv_input/source.mp4")
+          if len(sbv_files) != 1:
+              raise SystemExit(f"Input Release must contain exactly one .sbv file; found {len(sbv_files)}.")
+          if not video.is_file() or video.stat().st_size == 0:
+              raise SystemExit("Input Release must also contain a non-empty file named exactly source.mp4.")
+          print(f"SBV input: {sbv_files[0].name} ({sbv_files[0].stat().st_size} bytes)")
+          print(f"Video input: {video.name} ({video.stat().st_size} bytes)")
           PY
       - name: Run parser and unit tests
         run: python -m unittest discover -s tests -v
@@ -84,7 +88,7 @@ jobs:
                   if float(sub["start_seconds"])<0 or float(sub["end_seconds"])<=float(sub["start_seconds"]) or not sub.get("text"): raise SystemExit(f"Short {n}: invalid subtitle.")
           print(f"Live manifest contract passed: {len(shorts)} Shorts.")
           PY
-      - name: Clear all existing assets and publish only shorts_manifest.json
+      - name: Clear all existing assets and publish new JSON plus source.mp4
         env:
           GH_TOKEN: ${{ secrets.LIVE_REPO_TOKEN }}
           LIVE_REPOSITORY: lettermanagementorthosgpgi-coder/jyotirlingshivmathlive
@@ -99,12 +103,12 @@ jobs:
             echo "Deleting release asset: $asset"
             gh release delete-asset "$LIVE_RELEASE_TAG" "$asset" --yes --repo "$LIVE_REPOSITORY"
           done < <(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '.assets[].name')
-          gh release upload "$LIVE_RELEASE_TAG" shorts_manifest.json --repo "$LIVE_REPOSITORY"
-          echo "Published shorts_manifest.json as the ONLY asset in $LIVE_REPOSITORY release $LIVE_RELEASE_TAG"
+          gh release upload "$LIVE_RELEASE_TAG" shorts_manifest.json sbv_input/source.mp4 --repo "$LIVE_REPOSITORY"
+          echo "Published shorts_manifest.json and source.mp4 to $LIVE_REPOSITORY release $LIVE_RELEASE_TAG"
+          assets="$(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '[.assets[].name] | sort | join(",")')"
+          [ "$assets" = "shorts_manifest.json,source.mp4" ] || { echo "::error::Unexpected final release assets: $assets"; exit 1; }
           remaining="$(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '.assets | length')"
-          [ "$remaining" = "1" ] || { echo "::error::Expected exactly one release asset after publishing; found $remaining."; exit 1; }
-          only_asset="$(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '.assets[0].name')"
-          [ "$only_asset" = "shorts_manifest.json" ] || { echo "::error::Unexpected remaining asset: $only_asset"; exit 1; }
+          [ "$remaining" = "2" ] || { echo "::error::Expected exactly two release assets after publishing; found $remaining."; exit 1; }
       - name: Upload research report
         if: always()
         uses: actions/upload-artifact@v4
