@@ -83,6 +83,27 @@ def generate(provider, prompt):
         }
         return result, model, tokens
 
+    if provider == "cloudflare":
+        token = os.getenv("CLOUDFLARE_API_TOKEN")
+        account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+        if not token or not account_id:
+            raise RuntimeError("CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required")
+        model = os.getenv("CLOUDFLARE_MODEL", "@cf/meta/llama-3.2-1b-instruct")
+        data = _post(
+            f"https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/{model}",
+            {"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            {"messages": [
+                {"role": "system", "content": "You are an independent transcript reviewer. Be factual and careful."},
+                {"role": "user", "content": prompt},
+            ]},
+        )
+        if not data.get("success", False):
+            raise RuntimeError(f"Cloudflare Workers AI returned errors: {data.get('errors', [])}")
+        result = (data.get("result") or {}).get("response", "")
+        if not result:
+            raise RuntimeError("Cloudflare Workers AI returned no text")
+        return result, model, {"reported_by_api": False}
+
     raise RuntimeError(f"Unknown AI provider: {provider}")
 
 
