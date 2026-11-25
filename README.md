@@ -28,7 +28,7 @@ Optional repository variables:
 - GEMINI_MODEL
 - CLOUDFLARE_MODEL (defaults to @cf/meta/llama-3.2-1b-instruct)
 
-The SBV Release must contain one .sbv asset. The target Live Release must already exist and contain source.mp4. The workflow does not create or replace the video asset.
+The SBV Release must contain one .sbv asset. The target Live Release must already exist. WARNING: publishing deliberately removes every asset currently attached to that Live Release, including source.mp4 and any previously generated Shorts, and leaves only shorts_manifest.json. The Release/tag itself remains.
 
 ## Quality and safety rules
 
@@ -38,5 +38,5 @@ The SBV Release must contain one .sbv asset. The target Live Release must alread
 - Hindi subtitles are reconstructed verbatim from SBV and converted to clip-relative timestamps. No AI-generated subtitle text is used.
 - If fewer than the requested number pass quality checks, the system returns fewer; it does not invent weak clips to reach a target.
 - A machine-readable sbv_review_report.json and the final manifest are retained as a 14-day Actions artifact.
-- This repository does not modify the Live repository's code or workflows, upload/publish to YouTube, or change channel metadata.
+- This repository does not modify the Live repository's code or workflows, upload/publish to YouTube, or change channel metadata. It intentionally replaces the entire asset set of the selected Live Release with the single JSON manifest.
 
