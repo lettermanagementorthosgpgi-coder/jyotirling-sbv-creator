@@ -33,7 +33,7 @@ def validate_cues(cues):
         if b["start"]<a["start"]: raise ValueError("SBV cues are not in chronological order.")
         if b["start"]<a["end"]-0.05: raise ValueError(f"Overlapping SBV cues near cue {n}.")
 
-def make_batches(cues, window_seconds=300):
+def make_batches(cues, window_seconds=600):
     batches=[]; current=[]; window_start=cues[0]["start"]
     for cue in cues:
         if current and cue["start"]-window_start>=window_seconds:
