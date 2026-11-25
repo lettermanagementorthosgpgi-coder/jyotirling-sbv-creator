@@ -3,6 +3,14 @@ import json
 import os
 import urllib.error
 import urllib.request
+import time
+import re
+
+# Conservative per-provider pacing: one request per minute by default.
+_MIN_INTERVAL_SECONDS = max(1, int(os.getenv("AI_MIN_INTERVAL_SECONDS", "60")))
+_MAX_RETRIES = max(0, int(os.getenv("AI_MAX_RETRIES", "3")))
+_MAX_RETRY_WAIT_SECONDS = max(60, int(os.getenv("AI_MAX_RETRY_WAIT_SECONDS", "900")))
+_LAST_CALL = {}
 
 
 def _post(url, headers, body, timeout=300):
@@ -20,8 +28,8 @@ def _post(url, headers, body, timeout=300):
         raise RuntimeError(f"AI API HTTP {exc.code}{suffix}: {detail}") from exc
 
 
-def generate(provider, prompt):
-    """Return (generated_text, model_name, usage_metadata)."""
+def _generate_once(provider, prompt):
+    """Make one provider API request; return (text, model, usage)."""
     if provider == "openai":
         key = os.getenv("OPENAI_API_KEY")
         if not key:
@@ -82,3 +90,37 @@ def generate(provider, prompt):
         return result, model, {}
 
     raise RuntimeError(f"Unknown AI provider: {provider}")
+
+
+def generate(provider, prompt):
+    """Pace each provider independently and retry transient/rate-limit failures."""
+    for attempt in range(_MAX_RETRIES + 1):
+        previous = _LAST_CALL.get(provider)
+        if previous is not None:
+            wait = _MIN_INTERVAL_SECONDS - (time.monotonic() - previous)
+            if wait > 0:
+                print(f"{provider}: pacing limit; waiting {int(wait + 0.99)}s before next request.", flush=True)
+                time.sleep(wait)
+        _LAST_CALL[provider] = time.monotonic()
+        try:
+            return _generate_once(provider, prompt)
+        except RuntimeError as exc:
+            message = str(exc)
+            match = re.search(r"AI API HTTP (429|500|502|503|504)", message)
+            if not match or attempt >= _MAX_RETRIES:
+                raise
+            retry_match = re.search(r"Retry-After: ([0-9]+)", message)
+            retry_wait = int(retry_match.group(1)) if retry_match else min(60 * (2 ** attempt), 300)
+            if retry_wait > _MAX_RETRY_WAIT_SECONDS:
+                raise RuntimeError(
+                    f"{provider} requested a {retry_wait}s cooldown; this exceeds the "
+                    f"configured safe wait ({_MAX_RETRY_WAIT_SECONDS}s). Stopping rather "
+                    "than sending requests during the provider's cooldown."
+                ) from exc
+            print(
+                f"{provider}: transient HTTP {match.group(1)}; retrying after {retry_wait}s "
+                f"(attempt {attempt + 2}/{_MAX_RETRIES + 1}).",
+                flush=True,
+            )
+            time.sleep(retry_wait)
+    raise RuntimeError(f"{provider}: retry loop ended unexpectedly.")
