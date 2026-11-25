@@ -4,13 +4,13 @@ This repository does not download videos, transcribe audio, create SBV files, re
 
 ## Workflow
 
-1. In this repository, create a GitHub Release and attach exactly one .sbv file plus the matching video named exactly `source.mp4`. A tag such as sbv-2026-11-25-gita-3 is suitable.
+1. In this repository, create a GitHub Release and attach exactly one `.sbv` file. The video is uploaded separately by you to the target Live Release as `source.mp4`. A tag such as sbv-2026-11-25-gita-3 is suitable.
 2. Open Actions → SBV Research and Live JSON Publisher → Run workflow.
-3. Enter the input Release tag containing both files. Set the Live Release tag to Friday (or another existing tag). Choose a maximum of 5, 7, or 10 Shorts.
+3. Enter the SBV input Release tag. Set the Live Release tag to Friday (or another existing tag). Choose a maximum of 5, 7, or 10 Shorts.
 4. The workflow parses every SBV cue, divides the full transcript into timestamp-based batches, and sends every batch independently to OpenAI, Gemini and Cloudflare Workers AI.
 5. The providers propose complete-thought clips. Python rejects invalid durations/timestamps and reconstructs subtitles directly from the original SBV text; AI is never allowed to write or paraphrase subtitles.
-6. The workflow validates shorts_manifest.json and deletes every existing asset from the selected Live GitHub Release, then uploads the newly generated `shorts_manifest.json` and supplied `source.mp4`.
-7. Open the Live repository and manually run Actions → Jyotirling Shivmath YouTube Shorts Creator with that same Release tag (for example, Friday). The Live workflow receives both the fresh `source.mp4` and matching manifest from the same Friday Release.
+6. The workflow validates shorts_manifest.json and preserves the manually uploaded `source.mp4`, deletes every other existing asset (old manifest and previously generated Shorts), then uploads the newly generated `shorts_manifest.json`.
+7. Open the Live repository and manually run Actions → Jyotirling Shivmath YouTube Shorts Creator with that same Release tag (for example, Friday). The Live workflow reads the manually uploaded `source.mp4` and the newly generated manifest from the same Friday Release.
 
 ## Required Actions secrets
 
@@ -20,7 +20,7 @@ Configure these in Settings → Secrets and variables → Actions → Secrets in
 - GEMINI_API_KEY
 - CLOUDFLARE_API_TOKEN
 - CLOUDFLARE_ACCOUNT_ID
-- LIVE_REPO_TOKEN — a GitHub token with Contents: Read and write access to the private lettermanagementorthosgpgi-coder/jyotirlingshivmathlive repository. It is used to clear and repopulate the selected Live Release with only the new manifest and `source.mp4`.
+- LIVE_REPO_TOKEN — a GitHub token with Contents: Read and write access to the private lettermanagementorthosgpgi-coder/jyotirlingshivmathlive repository. It is used to preserve `source.mp4`, clear stale manifest/Shorts assets, and publish the new manifest to the selected Live Release.
 
 Optional repository variables:
 
@@ -28,7 +28,7 @@ Optional repository variables:
 - GEMINI_MODEL
 - CLOUDFLARE_MODEL (defaults to @cf/meta/llama-3.2-1b-instruct)
 
-The input SBV Creator Release must contain exactly one `.sbv` file and one non-empty file named exactly `source.mp4`. The target Live Release must already exist. WARNING: publishing deliberately removes every asset currently attached to that Live Release, including the old JSON, old `source.mp4`, and any previously generated Shorts. It then leaves exactly two fresh assets: `shorts_manifest.json` and `source.mp4`. The Release/tag itself remains.
+The input SBV Creator Release must contain exactly one `.sbv` file. Before running SBV Creator, upload exactly one non-empty file named `source.mp4` manually to the target Live Release (for example, Friday). The target Live Release must already exist and contain that MP4. WARNING: publishing preserves `source.mp4` but deletes every other existing asset from that Live Release, including the old JSON and previously generated Shorts. It then uploads the new `shorts_manifest.json`. The Release/tag itself remains.
 
 ## Quality and safety rules
 
@@ -38,5 +38,5 @@ The input SBV Creator Release must contain exactly one `.sbv` file and one non-e
 - Hindi subtitles are reconstructed verbatim from SBV and converted to clip-relative timestamps. No AI-generated subtitle text is used.
 - If fewer than the requested number pass quality checks, the system returns fewer; it does not invent weak clips to reach a target.
 - A machine-readable sbv_review_report.json and the final manifest are retained as a 14-day Actions artifact.
-- This repository does not modify the Live repository's code or workflows, upload/publish to YouTube, or change channel metadata. It intentionally replaces the entire asset set of the selected Live Release with exactly the new JSON manifest and its matching source video.
+- This repository does not modify the Live repository's code or workflows, upload/publish to YouTube, or change channel metadata. It intentionally keeps the manually uploaded `source.mp4` and replaces the rest of the release assets with the newly generated JSON manifest. The Live workflow then generates and uploads the Shorts packages to that same Release.
 
