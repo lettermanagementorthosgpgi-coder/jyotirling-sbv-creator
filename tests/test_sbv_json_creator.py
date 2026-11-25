@@ -1,5 +1,5 @@
 import unittest
-from src.sbv_json_creator import parse_sbv, make_batches, _subtitles, _candidate
+from src.sbv_json_creator import parse_sbv, make_batches, _subtitles, _candidate, _select
 
 class SBVTests(unittest.TestCase):
     def test_parse_multiline_and_ms(self):
@@ -15,6 +15,16 @@ class SBVTests(unittest.TestCase):
     def test_subtitles_are_verbatim_and_relative(self):
         cues=[{"start":10.0,"end":12.0,"text":"नमस्ते"},{"start":12.0,"end":16.0,"text":"भगवान शिव"}]
         out=_subtitles(cues,11,15); self.assertEqual(out[0]["start_seconds"],0); self.assertEqual(out[0]["end_seconds"],1); self.assertEqual(out[1]["text"],"भगवान शिव")
+    def test_selection_rejects_duplicate_titles_and_overlaps(self):
+        candidates=[
+            {"start_seconds":0,"end_seconds":15,"title":"एक ही शीर्षक","quality_score":9,"provider":"openai"},
+            {"start_seconds":20,"end_seconds":35,"title":"एक ही शीर्षक","quality_score":9,"provider":"gemini"},
+            {"start_seconds":30,"end_seconds":45,"title":"दूसरा शीर्षक","quality_score":9,"provider":"cloudflare"},
+        ]
+        selected=_select(candidates,10)
+        self.assertEqual(len(selected),1)
+        self.assertEqual(selected[0]["title"],"एक ही शीर्षक")
+
     def test_candidate_duration_guard(self):
         cues=[{"start":10.0,"end":20.0,"text":"विचार"}]
         item={"start_seconds":10,"end_seconds":20,"quality_score":9,"title":"शीर्षक","description":"विवरण","reason":"पूर्ण"}
