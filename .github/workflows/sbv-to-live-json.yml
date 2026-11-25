@@ -98,7 +98,7 @@ jobs:
           python - <<'PY'
           import json, os
           assets=json.loads(os.environ["ASSETS_BEFORE"])
-          videos=[name for name in assets if name.lower()=="source.mp4"]
+          videos=[name for name in assets if name=="source.mp4"]
           if len(videos)!=1:
               raise SystemExit(f"Friday Release must already contain exactly one manually uploaded source.mp4; found {len(videos)}.")
           PY
