@@ -36,7 +36,7 @@ class SBVTests(unittest.TestCase):
     def test_selection_rejects_duplicate_titles_and_overlaps(self):
         candidates=[
             {"start_seconds":0,"end_seconds":15,"title":"एक ही शीर्षक","quality_score":9,"provider":"openai"},
-            {"start_seconds":20,"end_seconds":35,"title":"एक ही शीर्षक","quality_score":9,"provider":"gemini"},
+            {"start_seconds":20,"end_seconds":35,"title":"एक ही शीर्षक","quality_score":9,"provider":"openai"},
             {"start_seconds":10,"end_seconds":25,"title":"दूसरा शीर्षक","quality_score":9,"provider":"cloudflare"},
         ]
         selected=_select(candidates,10)
