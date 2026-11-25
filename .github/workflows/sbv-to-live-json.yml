@@ -25,7 +25,7 @@ concurrency:
 jobs:
   research-and-publish:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,7 +57,10 @@ jobs:
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-          SBV_BATCH_SECONDS: "600"
+          SBV_BATCH_SECONDS: "120"
+          AI_MIN_INTERVAL_SECONDS: "60"
+          AI_MAX_RETRIES: "3"
+          AI_MAX_RETRY_WAIT_SECONDS: "900"
         run: |
           python - <<'PY'
           from pathlib import Path
