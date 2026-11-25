@@ -96,11 +96,13 @@ def _select(candidates,count):
         best=max(items,key=lambda x:x["quality_score"]); reviewers=sorted({x["provider"] for x in items})
         merged.append({**best,"reviewers":reviewers,"quality_score":round(min(10,best["quality_score"]+0.25*(len(reviewers)-1)),2)})
     merged.sort(key=lambda x:(len(x["reviewers"]),x["quality_score"]),reverse=True)
-    chosen=[]
+    chosen=[]; seen_titles=set()
     for item in merged:
         s,e=item["start_seconds"],item["end_seconds"]
+        title_key=re.sub(r"\W+","",item["title"].casefold())
+        if not title_key or title_key in seen_titles: continue
         if any(s<old["end_seconds"] and e>old["start_seconds"] for old in chosen): continue
-        chosen.append(item)
+        chosen.append(item); seen_titles.add(title_key)
         if len(chosen)>=count: break
     return sorted(chosen,key=lambda x:x["start_seconds"])
 
