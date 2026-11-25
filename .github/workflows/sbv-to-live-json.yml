@@ -20,7 +20,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: sbv-json-${{ inputs.live_release_tag }
+  group: sbv-json-${{ inputs.live_release_tag }}}
   cancel-in-progress: false
 jobs:
   research-and-publish:
@@ -37,8 +37,8 @@ jobs:
           pip install -r requirements.txt
       - name: Download supplied SBV from this repository Release
         env:
-          GH_TOKEN: ${{ github.token }
-          SBV_RELEASE_TAG: ${{ inputs.sbv_release_tag }
+          GH_TOKEN: ${{ github.token }}
+          SBV_RELEASE_TAG: ${{ inputs.sbv_release_tag }}
         run: |
           mkdir -p sbv_input
           gh release download "$SBV_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir sbv_input
@@ -53,20 +53,20 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Research full SBV with three independent AI reviewers
         env:
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }
-          CLOUDFLARE_MODEL: ${{ vars.CLOUDFLARE_MODEL }
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_MODEL: ${{ vars.CLOUDFLARE_MODEL }}
           SBV_BATCH_SECONDS: "600"
         run: |
           python - <<'PY'
           from pathlib import Path
           from src.sbv_json_creator import create_manifest
           files = list(Path("sbv_input").glob("*.sbv"))
-          create_manifest(str(files[0]), "shorts_manifest.json", count=int("${{ inputs.shorts_count }"))
+          create_manifest(str(files[0]), "shorts_manifest.json", count=int("${{ inputs.shorts_count }}"))
           PY
       - name: Validate Live manifest contract
         run: |
@@ -86,9 +86,9 @@ jobs:
           PY
       - name: Replace only shorts_manifest.json in the selected Live Release
         env:
-          GH_TOKEN: ${{ secrets.LIVE_REPO_TOKEN }
+          GH_TOKEN: ${{ secrets.LIVE_REPO_TOKEN }}
           LIVE_REPOSITORY: lettermanagementorthosgpgi-coder/jyotirlingshivmathlive
-          LIVE_RELEASE_TAG: ${{ inputs.live_release_tag }
+          LIVE_RELEASE_TAG: ${{ inputs.live_release_tag }}}
         run: |
           test -n "$GH_TOKEN" || { echo "::error::Add LIVE_REPO_TOKEN with write access to jyotirlingshivmathlive."; exit 1; }
           gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY"
@@ -98,7 +98,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sbv-research-report-${{ github.run_number }
+          name: sbv-research-report-${{ github.run_number }}
           path: |
             sbv_review_report.json
             shorts_manifest.json
