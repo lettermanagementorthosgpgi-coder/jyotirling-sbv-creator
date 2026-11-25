@@ -1,0 +1,106 @@
+name: SBV Research and Live JSON Publisher
+on:
+  workflow_dispatch:
+    inputs:
+      sbv_release_tag:
+        description: "Release tag in this repository containing exactly one .sbv file"
+        required: true
+        type: string
+      live_release_tag:
+        description: "Existing Release tag in jyotirlingshivmathlive (default: Friday)"
+        required: true
+        default: "Friday"
+        type: string
+      shorts_count:
+        description: "Maximum Shorts to select"
+        required: true
+        type: choice
+        options: ["5", "7", "10"]
+        default: "10"
+permissions:
+  contents: read
+concurrency:
+  group: sbv-json-${{ inputs.live_release_tag }
+  cancel-in-progress: false
+jobs:
+  research-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Download supplied SBV from this repository Release
+        env:
+          GH_TOKEN: ${{ github.token }
+          SBV_RELEASE_TAG: ${{ inputs.sbv_release_tag }
+        run: |
+          mkdir -p sbv_input
+          gh release download "$SBV_RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir sbv_input
+          python - <<'PY'
+          from pathlib import Path
+          files = list(Path("sbv_input").glob("*.sbv"))
+          if len(files) != 1:
+              raise SystemExit(f"SBV Release must contain exactly one .sbv file; found {len(files)}.")
+          print(f"SBV input: {files[0].name} ({files[0].stat().st_size} bytes)")
+          PY
+      - name: Run parser and unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Research full SBV with three independent AI reviewers
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }
+          CLOUDFLARE_MODEL: ${{ vars.CLOUDFLARE_MODEL }
+          SBV_BATCH_SECONDS: "300"
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from src.sbv_json_creator import create_manifest
+          files = list(Path("sbv_input").glob("*.sbv"))
+          create_manifest(str(files[0]), "shorts_manifest.json", count=int("${{ inputs.shorts_count }"))
+          PY
+      - name: Validate Live manifest contract
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data=json.loads(Path("shorts_manifest.json").read_text(encoding="utf-8"))
+          shorts=data.get("shorts")
+          if not isinstance(shorts,list) or not 1<=len(shorts)<=10: raise SystemExit("Manifest must contain 1-10 Shorts.")
+          for n,item in enumerate(shorts,1):
+              start,end=float(item["start_seconds"]),float(item["end_seconds"])
+              if not 5<=end-start<=60: raise SystemExit(f"Short {n}: duration outside 5-60 seconds.")
+              if not item.get("title") or not item.get("description") or not item.get("subtitles"): raise SystemExit(f"Short {n}: missing required fields.")
+              for sub in item["subtitles"]:
+                  if float(sub["start_seconds"])<0 or float(sub["end_seconds"])<=float(sub["start_seconds"]) or not sub.get("text"): raise SystemExit(f"Short {n}: invalid subtitle.")
+          print(f"Live manifest contract passed: {len(shorts)} Shorts.")
+          PY
+      - name: Replace only shorts_manifest.json in the selected Live Release
+        env:
+          GH_TOKEN: ${{ secrets.LIVE_REPO_TOKEN }
+          LIVE_REPOSITORY: lettermanagementorthosgpgi-coder/jyotirlingshivmathlive
+          LIVE_RELEASE_TAG: ${{ inputs.live_release_tag }
+        run: |
+          test -n "$GH_TOKEN" || { echo "::error::Add LIVE_REPO_TOKEN with write access to jyotirlingshivmathlive."; exit 1; }
+          gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY"
+          gh release upload "$LIVE_RELEASE_TAG" shorts_manifest.json --clobber --repo "$LIVE_REPOSITORY"
+          echo "Published shorts_manifest.json to $LIVE_REPOSITORY release $LIVE_RELEASE_TAG"
+      - name: Upload research report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbv-research-report-${{ github.run_number }
+          path: |
+            sbv_review_report.json
+            shorts_manifest.json
+          if-no-files-found: warn
+          retention-days: 14
