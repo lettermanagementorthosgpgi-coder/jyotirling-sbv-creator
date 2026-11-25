@@ -51,14 +51,12 @@ jobs:
           PY
       - name: Run parser and unit tests
         run: python -m unittest discover -s tests -v
-      - name: Research full SBV with two independent AI reviewers
+      - name: Research full SBV with OpenAI only
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
-          SBV_BATCH_SECONDS: "120"
-          AI_MIN_INTERVAL_SECONDS: "60"
+          SBV_BATCH_SECONDS: "600"
+          AI_MIN_INTERVAL_SECONDS: "120"
           AI_MAX_RETRIES: "3"
           AI_MAX_RETRY_WAIT_SECONDS: "900"
         run: |

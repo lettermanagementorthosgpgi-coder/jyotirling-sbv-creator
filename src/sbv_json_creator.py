@@ -4,7 +4,7 @@ from pathlib import Path
 from .ai_providers import generate
 
 TS = re.compile(r"^\s*(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})\s*,\s*(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})\s*$")
-PROVIDERS = ("openai", "gemini")
+PROVIDERS = ("openai",)
 
 def _sec(h,m,s,ms):
     return int(h)*3600 + int(m)*60 + int(s) + int(str(ms).ljust(3,"0")[:3])/1000
@@ -139,68 +139,44 @@ def _select(candidates,count):
 def create_manifest(sbv_path,output_path,count=10,minimum=10,maximum=60):
     path=Path(sbv_path); cues=parse_sbv(path.read_text(encoding="utf-8-sig"))
     batches=make_batches(cues,int(os.getenv("SBV_BATCH_SECONDS","600")))
-    available=[]
-    if os.getenv("OPENAI_API_KEY"): available.append("openai")
-    if os.getenv("GEMINI_API_KEY"): available.append("gemini")
-    if "openai" not in available:
-        raise RuntimeError("OPENAI_API_KEY is required; OpenAI is the primary reviewer.")
-    candidates=[]; failures=[]; fallbacks=[]
+    if not os.getenv("OPENAI_API_KEY"):
+        raise RuntimeError("OPENAI_API_KEY is required; this workflow uses OpenAI only.")
+
+    candidates=[]; failures=[]; reviewed_batches=0
     for n,batch in enumerate(batches,1):
-        print(f"Reviewing complete transcript batch {n}/{len(batches)} ({len(batch)} cues).",flush=True)
-        for provider in available:
-            try:
-                raw,model,_usage=generate(provider,_prompt(batch,n,len(batches),minimum,maximum))
-                items=_json(raw).get("candidates",[])
-                if not isinstance(items,list): raise ValueError("AI candidates must be a list.")
-                accepted=0
-                for item in items:
-                    if isinstance(item,dict):
-                        found=_candidate(item,batch,provider,minimum,maximum)
-                        if found: found["model"]=model; candidates.append(found); accepted+=1
-                print(f"{provider} ({model}): {accepted} candidate(s).",flush=True)
-            except Exception as exc:
-                message=f"{provider} batch {n}: {type(exc).__name__}: {exc}"
-                print("WARNING: "+message,flush=True)
-                if provider == "openai":
-                    failures.append(message)
-                elif provider == "gemini":
-                    # Gemini is optional. When it is unavailable, OpenAI performs
-                    # a second-pass review of this same batch.
-                    try:
-                        print(f"Gemini unavailable on batch {n}; requesting OpenAI fallback review.",flush=True)
-                        fallback_prompt=_prompt(batch,n,len(batches),minimum,maximum) + (
-                            "\\nGemini is unavailable. Perform a careful second-pass review as the "
-                            "sole available reviewer for this batch. Return the same JSON schema."
-                        )
-                        raw,model,_usage=generate("openai",fallback_prompt)
-                        items=_json(raw).get("candidates",[])
-                        if not isinstance(items,list): raise ValueError("OpenAI fallback candidates must be a list.")
-                        accepted=0
-                        for item in items:
-                            if isinstance(item,dict):
-                                found=_candidate(item,batch,"openai",minimum,maximum)
-                                if found: found["model"]=model; candidates.append(found); accepted+=1
-                        fallbacks.append(f"Gemini unavailable on batch {n}; OpenAI fallback completed.")
-                        print(f"openai fallback ({model}): {accepted} candidate(s).",flush=True)
-                    except Exception as fallback_exc:
-                        failures.append(
-                            f"Gemini and OpenAI fallback failed on batch {n}: "
-                            f"{type(fallback_exc).__name__}: {fallback_exc}"
-                        )
-                        print("WARNING: "+failures[-1],flush=True)
-    # Fail closed: never create/publish a manifest from a partial AI review.
-    if failures:
+        print(f"Reviewing complete transcript batch {n}/{len(batches)} ({len(batch)} cues) with OpenAI.",flush=True)
+        try:
+            raw,model,_usage=generate("openai",_prompt(batch,n,len(batches),minimum,maximum))
+            items=_json(raw).get("candidates",[])
+            if not isinstance(items,list): raise ValueError("AI candidates must be a list.")
+            accepted=0
+            for item in items:
+                if isinstance(item,dict):
+                    found=_candidate(item,batch,"openai",minimum,maximum)
+                    if found: found["model"]=model; candidates.append(found); accepted+=1
+            reviewed_batches+=1
+            print(f"openai ({model}): {accepted} candidate(s).",flush=True)
+        except Exception as exc:
+            message=f"openai batch {n}: {type(exc).__name__}: {exc}"
+            failures.append(message)
+            print("WARNING: "+message,flush=True)
+            # OpenAI is the sole reviewer. Stop on the first failure rather than
+            # wasting requests on later batches when this run cannot publish.
+            break
+
+    if failures or reviewed_batches != len(batches):
         report={"sbv_file":path.name,"cue_count":len(cues),"batch_count":len(batches),
-                "providers":available,"candidate_count":len(candidates),"selected_count":0,
-                "warnings":failures,"fallbacks":fallbacks,"status":"incomplete_ai_review"}
+                "reviewed_batch_count":reviewed_batches,"providers":["openai"],
+                "candidate_count":len(candidates),"selected_count":0,
+                "warnings":failures,"status":"incomplete_openai_review"}
         Path("sbv_review_report.json").write_text(
             json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8"
         )
         raise RuntimeError(
-            "AI review incomplete; manifest generation and publishing are blocked. "
-            + " | ".join(failures[:8])
+            "OpenAI review incomplete; manifest generation and publishing are blocked. "
+            + (" | ".join(failures[:8]) if failures else "Not all transcript batches were reviewed.")
         )
-    if not candidates: raise RuntimeError("No valid candidates after both AI reviewers completed all batches.")
+    if not candidates: raise RuntimeError("No valid candidates after OpenAI reviewed every batch.")
     selected=_select(candidates,count)
     if not selected: raise RuntimeError("No non-overlapping candidates passed validation.")
     shorts=[]
@@ -211,10 +187,11 @@ def create_manifest(sbv_path,output_path,count=10,minimum=10,maximum=60):
                        "title":item["title"],"description":item["description"],"subtitles":subs})
     manifest={"shorts":shorts}
     Path(output_path).write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
-    report={"sbv_file":path.name,"cue_count":len(cues),"batch_count":len(batches),"providers":available,
+    report={"sbv_file":path.name,"cue_count":len(cues),"batch_count":len(batches),
+            "reviewed_batch_count":reviewed_batches,"providers":["openai"],
             "candidate_count":len(candidates),"selected_count":len(shorts),
             "selected":[{k:x[k] for k in ("start_seconds","end_seconds","title","quality_score","reason","reviewers")} for x in selected],
-            "warnings":failures,"fallbacks":fallbacks}
+            "warnings":[]}
     Path("sbv_review_report.json").write_text(json.dumps(report,ensure_ascii=False,indent=2)+"\n",encoding="utf-8")
-    print(f"Manifest ready: {len(shorts)} Shorts from all {len(cues)} SBV cues.",flush=True)
+    print(f"Manifest ready: {len(shorts)} Shorts from all {len(cues)} SBV cues, reviewed by OpenAI.",flush=True)
     return manifest

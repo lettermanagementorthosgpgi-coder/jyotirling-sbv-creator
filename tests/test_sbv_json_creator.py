@@ -1,5 +1,5 @@
 import unittest
-from src.sbv_json_creator import parse_sbv, make_batches, _subtitles, _candidate, _select
+from src.sbv_json_creator import parse_sbv, make_batches, _subtitles, _candidate, _select, PROVIDERS
 
 class SBVTests(unittest.TestCase):
     def test_parse_multiline_and_ms(self):
@@ -21,14 +21,23 @@ class SBVTests(unittest.TestCase):
     def test_batches_keep_every_cue(self):
         cues=[{"start":i*10.0,"end":i*10.0+2,"text":str(i)} for i in range(80)]
         batches=make_batches(cues,100); self.assertEqual(sum(map(len,batches)),80); self.assertEqual([c for b in batches for c in b],cues)
+    def test_openai_is_the_only_configured_reviewer(self):
+        self.assertEqual(PROVIDERS, ("openai",))
+
+    def test_ten_minute_batches_reduce_request_count(self):
+        cues=[{"start":i*10.0,"end":i*10.0+2,"text":str(i)} for i in range(540)]
+        batches=make_batches(cues,600)
+        self.assertEqual(len(batches),9)
+        self.assertEqual(sum(map(len,batches)),len(cues))
+
     def test_subtitles_are_verbatim_and_relative(self):
         cues=[{"start":10.0,"end":12.0,"text":"नमस्ते"},{"start":12.0,"end":16.0,"text":"भगवान शिव"}]
         out=_subtitles(cues,11,15); self.assertEqual(out[0]["start_seconds"],0); self.assertEqual(out[0]["end_seconds"],1); self.assertEqual(out[1]["text"],"भगवान शिव")
     def test_selection_rejects_duplicate_titles_and_overlaps(self):
         candidates=[
             {"start_seconds":0,"end_seconds":15,"title":"एक ही शीर्षक","quality_score":9,"provider":"openai"},
-            {"start_seconds":20,"end_seconds":35,"title":"एक ही शीर्षक","quality_score":9,"provider":"gemini"},
-            {"start_seconds":10,"end_seconds":25,"title":"दूसरा शीर्षक","quality_score":9,"provider":"cloudflare"},
+            {"start_seconds":20,"end_seconds":35,"title":"एक ही शीर्षक","quality_score":9,"provider":"openai"},
+            {"start_seconds":10,"end_seconds":25,"title":"दूसरा शीर्षक","quality_score":9,"provider":"openai"},
         ]
         selected=_select(candidates,10)
         self.assertEqual(len(selected),1)
