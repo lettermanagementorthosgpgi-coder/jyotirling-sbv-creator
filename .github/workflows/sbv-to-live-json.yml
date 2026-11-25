@@ -84,16 +84,27 @@ jobs:
                   if float(sub["start_seconds"])<0 or float(sub["end_seconds"])<=float(sub["start_seconds"]) or not sub.get("text"): raise SystemExit(f"Short {n}: invalid subtitle.")
           print(f"Live manifest contract passed: {len(shorts)} Shorts.")
           PY
-      - name: Replace only shorts_manifest.json in the selected Live Release
+      - name: Clear all existing assets and publish only shorts_manifest.json
         env:
           GH_TOKEN: ${{ secrets.LIVE_REPO_TOKEN }}
           LIVE_REPOSITORY: lettermanagementorthosgpgi-coder/jyotirlingshivmathlive
           LIVE_RELEASE_TAG: ${{ inputs.live_release_tag }}
         run: |
+          set -euo pipefail
           test -n "$GH_TOKEN" || { echo "::error::Add LIVE_REPO_TOKEN with write access to jyotirlingshivmathlive."; exit 1; }
-          gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY"
-          gh release upload "$LIVE_RELEASE_TAG" shorts_manifest.json --clobber --repo "$LIVE_REPOSITORY"
-          echo "Published shorts_manifest.json to $LIVE_REPOSITORY release $LIVE_RELEASE_TAG"
+          gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" >/dev/null
+          echo "Removing every existing asset from $LIVE_REPOSITORY release $LIVE_RELEASE_TAG"
+          while IFS= read -r asset; do
+            [ -n "$asset" ] || continue
+            echo "Deleting release asset: $asset"
+            gh release delete-asset "$LIVE_RELEASE_TAG" "$asset" --yes --repo "$LIVE_REPOSITORY"
+          done < <(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '.assets[].name')
+          gh release upload "$LIVE_RELEASE_TAG" shorts_manifest.json --repo "$LIVE_REPOSITORY"
+          echo "Published shorts_manifest.json as the ONLY asset in $LIVE_REPOSITORY release $LIVE_RELEASE_TAG"
+          remaining="$(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '.assets | length')"
+          [ "$remaining" = "1" ] || { echo "::error::Expected exactly one release asset after publishing; found $remaining."; exit 1; }
+          only_asset="$(gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY" --json assets --jq '.assets[0].name')"
+          [ "$only_asset" = "shorts_manifest.json" ] || { echo "::error::Unexpected remaining asset: $only_asset"; exit 1; }
       - name: Upload research report
         if: always()
         uses: actions/upload-artifact@v4
