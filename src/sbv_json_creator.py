@@ -72,9 +72,9 @@ Transcript cues: {json.dumps(batch,ensure_ascii=False,separators=(",",":"))}"""
 def _candidate(item,cues,provider,minimum,maximum):
     try: start=round(float(item["start_seconds"]),3); end=round(float(item["end_seconds"]),3); score=float(item.get("quality_score",0))
     except (KeyError,TypeError,ValueError): return None
-    if end-start<minimum or end-start>maximum or score<7: return None
-    if not any(c["start"]<=start+0.05 and c["end"]>start for c in cues): return None
-    if not any(c["start"]<end and c["end"]>=end-0.05 for c in cues): return None
+    if end-start<minimum or end-start>maximum or score<8: return None
+    if not any(abs(c["start"]-start)<=0.25 for c in cues): return None
+    if not any(abs(c["end"]-end)<=0.25 for c in cues): return None
     title=str(item.get("title","")).strip(); desc=str(item.get("description","")).strip(); reason=str(item.get("reason","")).strip()
     if not title or not desc or not reason: return None
     return {"start_seconds":start,"end_seconds":end,"title":title[:100],"description":desc[:1200],
@@ -106,7 +106,7 @@ def _select(candidates,count):
 
 def create_manifest(sbv_path,output_path,count=10,minimum=10,maximum=60):
     path=Path(sbv_path); cues=parse_sbv(path.read_text(encoding="utf-8-sig"))
-    batches=make_batches(cues,int(os.getenv("SBV_BATCH_SECONDS","300")))
+    batches=make_batches(cues,int(os.getenv("SBV_BATCH_SECONDS","600")))
     available=[]
     if os.getenv("OPENAI_API_KEY"): available.append("openai")
     if os.getenv("GEMINI_API_KEY"): available.append("gemini")
