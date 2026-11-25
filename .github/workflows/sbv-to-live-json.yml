@@ -20,7 +20,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: sbv-json-${{ inputs.live_release_tag }}}
+  group: sbv-json-${{ inputs.live_release_tag }}
   cancel-in-progress: false
 jobs:
   research-and-publish:
@@ -88,7 +88,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.LIVE_REPO_TOKEN }}
           LIVE_REPOSITORY: lettermanagementorthosgpgi-coder/jyotirlingshivmathlive
-          LIVE_RELEASE_TAG: ${{ inputs.live_release_tag }}}
+          LIVE_RELEASE_TAG: ${{ inputs.live_release_tag }}
         run: |
           test -n "$GH_TOKEN" || { echo "::error::Add LIVE_REPO_TOKEN with write access to jyotirlingshivmathlive."; exit 1; }
           gh release view "$LIVE_RELEASE_TAG" --repo "$LIVE_REPOSITORY"
