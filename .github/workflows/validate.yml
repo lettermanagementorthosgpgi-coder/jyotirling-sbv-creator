@@ -1,4 +1,4 @@
-name: Validate Shorts workflow
+name: Validate SBV Creator
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
       - name: Install Python dependencies
         run: python -m pip install -r requirements.txt
-      - name: Compile Python modules
-        run: python -m py_compile src/ai_providers.py src/shorts_creator.py
-      - name: Run helper tests
+      - name: Compile SBV modules
+        run: python -m py_compile src/ai_providers.py src/sbv_json_creator.py
+      - name: Run SBV parser and manifest tests
         run: python -m unittest discover -s tests -v
