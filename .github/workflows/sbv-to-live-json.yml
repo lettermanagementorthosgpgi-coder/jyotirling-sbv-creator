@@ -60,7 +60,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }
           CLOUDFLARE_MODEL: ${{ vars.CLOUDFLARE_MODEL }
-          SBV_BATCH_SECONDS: "300"
+          SBV_BATCH_SECONDS: "600"
         run: |
           python - <<'PY'
           from pathlib import Path
