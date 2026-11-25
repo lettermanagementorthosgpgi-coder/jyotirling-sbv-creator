@@ -4,7 +4,7 @@ from pathlib import Path
 from .ai_providers import generate
 
 TS = re.compile(r"^\s*(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})\s*,\s*(\d{1,2}):(\d{2}):(\d{2})[.,](\d{1,3})\s*$")
-PROVIDERS = ("openai", "gemini", "cloudflare")
+PROVIDERS = ("openai", "gemini")
 
 def _sec(h,m,s,ms):
     return int(h)*3600 + int(m)*60 + int(s) + int(str(ms).ljust(3,"0")[:3])/1000
